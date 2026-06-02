@@ -133,6 +133,13 @@ export async function getPreviewLogs(id: string): Promise<{ lines: string[] }> {
   return request(`/projects/${id}/logs`);
 }
 
+export async function updateFile(projectId: string, filePath: string, content: string): Promise<void> {
+  return request(`/projects/${projectId}/files/${filePath}`, {
+    method: "PUT",
+    body: JSON.stringify({ content }),
+  });
+}
+
 export async function listFiles(id: string): Promise<ProjectFile[]> {
   return request(`/projects/${id}/files`);
 }

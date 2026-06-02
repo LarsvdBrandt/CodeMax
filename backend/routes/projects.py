@@ -1,5 +1,7 @@
+import os
 import uuid
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -260,6 +262,46 @@ async def get_file(
     if not f:
         raise HTTPException(status_code=404, detail="File not found")
     return f
+
+
+class FileUpdateRequest(BaseModel):
+    content: str
+
+
+@router.put("/{project_id}/files/{file_path:path}")
+async def update_file(
+    project_id: uuid.UUID,
+    file_path: str,
+    body: FileUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    proj_result = await db.execute(
+        select(Project).where(Project.id == project_id, Project.user_id == current_user.id)
+    )
+    if not proj_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    result = await db.execute(
+        select(ProjectFile).where(
+            ProjectFile.project_id == project_id,
+            ProjectFile.file_path == file_path,
+        )
+    )
+    file_record = result.scalar_one_or_none()
+    if not file_record:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    file_record.content = body.content
+    file_record.updated_at = datetime.utcnow()
+
+    projects_dir = os.environ.get("PROJECTS_DIR", "/projects")
+    dest = Path(projects_dir) / str(project_id) / file_path
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(body.content)
+
+    await db.commit()
+    return {"ok": True}
 
 
 @router.post("/{project_id}/stop")
