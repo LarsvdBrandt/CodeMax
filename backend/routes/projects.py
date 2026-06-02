@@ -60,6 +60,7 @@ class PromptRequest(BaseModel):
 
 class TaskQueued(BaseModel):
     task_id: uuid.UUID
+    project_id: Optional[uuid.UUID] = None
 
 
 # ─── Routes ─────────────────────────────────────────────────────────────────
@@ -102,7 +103,7 @@ async def create_project(
     await db.commit()
 
     await publish_job(task.id, project.id, body.description)
-    return TaskQueued(task_id=task.id)
+    return TaskQueued(task_id=task.id, project_id=project.id)
 
 
 @router.get("/{project_id}", response_model=ProjectOut)
@@ -399,14 +400,31 @@ class PlanRequest(BaseModel):
     description: str
 
 
-@router.post("/plan", response_model=dict)
+@router.post("/planning", response_model=dict)
 async def generate_plan(
     body: PlanRequest,
     current_user: User = Depends(get_current_user),
 ):
-    from agents.planner import plan
+    from openai import AsyncOpenAI
+    import os
+
+    client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
     try:
-        plan_text = await plan(body.description)
+        response = await client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an expert web app architect. Given a project description, create a detailed plan for building it. Be specific about pages, components, features, and tech stack. Format as a clear, bullet-pointed plan."
+                },
+                {
+                    "role": "user",
+                    "content": f"Create a detailed implementation plan for: {body.description}"
+                }
+            ],
+            temperature=0.7,
+        )
+        plan_text = response.choices[0].message.content
         return {"plan": plan_text}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Plan generation failed: {str(e)}")

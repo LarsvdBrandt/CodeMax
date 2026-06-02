@@ -91,7 +91,7 @@ export async function listProjects(): Promise<Project[]> {
   return request("/projects");
 }
 
-export async function createProject(name: string, description: string): Promise<{ task_id: string }> {
+export async function createProject(name: string, description: string): Promise<{ task_id: string; project_id: string }> {
   return request("/projects", {
     method: "POST",
     body: JSON.stringify({ name, description }),
@@ -153,7 +153,7 @@ export async function deleteProject(projectId: string): Promise<void> {
 }
 
 export async function generatePlan(description: string): Promise<{ plan: string }> {
-  return request("/projects/plan", {
+  return request("/projects/planning", {
     method: "POST",
     body: JSON.stringify({ description }),
   });

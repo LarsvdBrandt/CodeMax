@@ -9,6 +9,7 @@ import {
 } from "@/lib/api";
 import FileExplorer from "@/components/FileExplorer";
 import CodeEditor from "@/components/CodeEditor";
+import ProjectsSidebar from "@/components/ProjectsSidebar";
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 const Icon = ({ d, size = 4 }: { d: string; size?: number }) => (
@@ -532,10 +533,12 @@ export default function ProjectPage() {
 
   const [view,         setView]         = useState<"preview"|"code">("preview");
   const [deviceMode,   setDeviceMode]   = useState<"desktop"|"mobile">("desktop");
-  const [activePanel,  setActivePanel]  = useState<"console"|"errors"|"warnings"|null>(null);
-  const [previewKey,   setPreviewKey]   = useState(0);
-  const [currentRoute, setCurrentRoute] = useState("/");
-  const [pageLabels,   setPageLabels]   = useState<Record<string, string>>({});
+  const [activePanel,   setActivePanel]  = useState<"console"|"errors"|"warnings"|null>(null);
+  const [previewKey,    setPreviewKey]   = useState(0);
+  const [currentRoute,  setCurrentRoute] = useState("/");
+  const [pageLabels,    setPageLabels]   = useState<Record<string, string>>({});
+  const [chatOpen,      setChatOpen]     = useState(true);
+  const [projectsOpen,  setProjectsOpen] = useState(false);
   const [prompt,       setPrompt]       = useState("");
   const [sending,      setSending]      = useState(false);
   const [sendError,    setSendError]    = useState("");
@@ -616,15 +619,58 @@ export default function ProjectPage() {
   return (
     <div className="h-screen flex bg-black text-white overflow-hidden p-2 gap-2">
 
+      <ProjectsSidebar open={projectsOpen} onClose={() => setProjectsOpen(false)} currentProjectId={id} />
+
+      {/* ── Collapsed chat strip ────────────────────────────────────────────── */}
+      {!chatOpen && (
+        <div className="w-10 flex-shrink-0 flex flex-col items-center gap-2 py-3 bg-[#0d0d0d] border border-[#222] rounded-[15px]">
+          <button onClick={() => setProjectsOpen(true)} title="All projects"
+            className="p-1.5 text-[#444] hover:text-white transition-colors rounded-[8px] hover:bg-[#1a1a1a]">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M4 6h16M4 12h16M4 18h7" />
+            </svg>
+          </button>
+          <Link href="/welcome" title="New project"
+            className="p-1.5 text-[#444] hover:text-white transition-colors rounded-[8px] hover:bg-[#1a1a1a]">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+          </Link>
+          <div className="flex-1" />
+          <button onClick={() => setChatOpen(true)} title="Show chat"
+            className="p-1.5 text-[#444] hover:text-white transition-colors rounded-[8px] hover:bg-[#1a1a1a]">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+        </div>
+      )}
+
       {/* ── Left: floating chat sidebar ─────────────────────────────────────── */}
+      {chatOpen && (
       <div className="w-[360px] flex-shrink-0 flex flex-col bg-[#0d0d0d] border border-[#222] rounded-[15px] overflow-hidden">
 
         {/* Header */}
-        <div className="flex items-center gap-2.5 px-4 py-3 border-b border-[#1e1e1e]">
-          <Link href="/dashboard" className="text-[#444] hover:text-white transition-colors">
-            <BackIcon />
+        <div className="flex items-center gap-1.5 px-3 py-3 border-b border-[#1e1e1e]">
+          <button onClick={() => setProjectsOpen(true)} title="All projects"
+            className="p-1.5 text-[#444] hover:text-white transition-colors rounded-[8px] hover:bg-[#1a1a1a] flex-shrink-0">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M4 6h16M4 12h16M4 18h7" />
+            </svg>
+          </button>
+          <Link href="/welcome" title="New project"
+            className="p-1.5 text-[#444] hover:text-white transition-colors rounded-[8px] hover:bg-[#1a1a1a] flex-shrink-0">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
           </Link>
-          <span className="font-medium text-sm truncate text-white">{project?.name ?? "..."}</span>
+          <span className="font-medium text-sm truncate text-white flex-1 px-1">{project?.name ?? "..."}</span>
+          <button onClick={() => setChatOpen(false)} title="Collapse chat"
+            className="p-1.5 text-[#444] hover:text-white transition-colors rounded-[8px] hover:bg-[#1a1a1a] flex-shrink-0">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </button>
         </div>
 
         {/* Messages */}
@@ -670,6 +716,7 @@ export default function ProjectPage() {
           </form>
         </div>
       </div>
+      )}
 
       {/* ── Right: editor ───────────────────────────────────────────────────── */}
       <div className="flex-1 flex flex-col overflow-hidden bg-[#0a0a0a] border border-[#222] rounded-[15px]">
