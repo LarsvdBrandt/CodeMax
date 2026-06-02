@@ -147,3 +147,14 @@ export async function listFiles(id: string): Promise<ProjectFile[]> {
 export async function getFile(projectId: string, filePath: string): Promise<ProjectFile> {
   return request(`/projects/${projectId}/files/${filePath}`);
 }
+
+export async function deleteProject(projectId: string): Promise<void> {
+  return request(`/projects/${projectId}`, { method: "DELETE" });
+}
+
+export async function generatePlan(description: string): Promise<{ plan: string }> {
+  return request("/projects/plan", {
+    method: "POST",
+    body: JSON.stringify({ description }),
+  });
+}

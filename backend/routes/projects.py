@@ -375,3 +375,38 @@ async def list_tasks(
         .order_by(Task.created_at.asc())
     )
     return result.scalars().all()
+
+
+@router.delete("/{project_id}")
+async def delete_project(
+    project_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(Project).where(Project.id == project_id, Project.user_id == current_user.id)
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    await db.delete(project)
+    await db.commit()
+    return {"deleted": True}
+
+
+class PlanRequest(BaseModel):
+    description: str
+
+
+@router.post("/plan", response_model=dict)
+async def generate_plan(
+    body: PlanRequest,
+    current_user: User = Depends(get_current_user),
+):
+    from agents.planner import plan
+    try:
+        plan_text = await plan(body.description)
+        return {"plan": plan_text}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

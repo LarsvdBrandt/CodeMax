@@ -37,83 +37,200 @@ const ChevronIcon = ({ open }: { open: boolean }) => (
   </svg>
 );
 
-// ─── Build animation ──────────────────────────────────────────────────────────
+// ─── Build feed ───────────────────────────────────────────────────────────────
+
 const CODE_LINES = [
-  { text: "import { useState } from 'react';", color: "#6b9bd2" },
-  { text: "import Head from 'next/head';",     color: "#6b9bd2" },
-  { text: "",                                  color: "" },
-  { text: "export default function App() {",   color: "#c792ea" },
-  { text: "  const [items, setItems] = useState([]);", color: "#a3be8c" },
-  { text: "  const [input, setInput] = useState('');", color: "#a3be8c" },
-  { text: "",                                  color: "" },
-  { text: "  return (",                        color: "#d8dee9" },
-  { text: "    <main className=\"container\">", color: "#88c0d0" },
-  { text: "      <h1>{/* Generated */}</h1>",  color: "#616e88" },
-  { text: "    </main>",                       color: "#88c0d0" },
-  { text: "  );",                              color: "#d8dee9" },
-  { text: "}",                                 color: "#c792ea" },
+  { t: "import { useState, useEffect } from 'react';", c: "#6b9bd2" },
+  { t: "import Head from 'next/head';",                c: "#6b9bd2" },
+  { t: "",                                             c: "" },
+  { t: "export default function App() {",             c: "#c792ea" },
+  { t: "  const [data, setData] = useState([]);",     c: "#a3be8c" },
+  { t: "  const [loading, setLoading] = useState(false);", c: "#a3be8c" },
+  { t: "",                                             c: "" },
+  { t: "  useEffect(() => {",                         c: "#ffd700" },
+  { t: "    fetchData();",                             c: "#d8dee9" },
+  { t: "  }, []);",                                   c: "#ffd700" },
+  { t: "",                                             c: "" },
+  { t: "  return (",                                  c: "#d8dee9" },
+  { t: "    <main className=\"min-h-screen\">",       c: "#88c0d0" },
+  { t: "      {data.map(item => (",                   c: "#d8dee9" },
+  { t: "        <Card key={item.id} {...item} />",     c: "#88c0d0" },
+  { t: "      ))}",                                   c: "#d8dee9" },
+  { t: "    </main>",                                  c: "#88c0d0" },
+  { t: "  );",                                        c: "#d8dee9" },
+  { t: "}",                                           c: "#c792ea" },
 ];
 
-function BuildAnimation({ log }: { log: TaskRecord["agent_log"] }) {
-  const latest = [...log].reverse().find(e => e.status === "running");
-  const label  = (s: string) =>
-    s.replace(/^codegen_\d+$/, "generating code")
-     .replace(/^autofix_\d+$/, "fixing errors")
-     .replace(/_/g, " ");
+const STEP_CYCLES: Record<string, string[]> = {
+  start:    ["Thinking about your request...", "Understanding what you need...", "Preparing a response..."],
+  analyze:  ["Analyzing the codebase...", "Identifying relevant files...", "Understanding the current structure..."],
+  retrieve: ["Loading file context...", "Reading relevant code...", "Building context for the AI..."],
+  plan:     ["Planning the changes...", "Deciding what files to update...", "Mapping out the approach..."],
+  build:    ["Installing npm packages...", "Starting the Next.js server...", "Warming up the preview..."],
+  autofix:  ["Detected a compilation error...", "Analyzing the error message...", "Rewriting the affected file..."],
+};
+
+function getStepCycle(step: string): string[] {
+  if (step.startsWith("codegen_"))  return [];    // handled separately
+  if (step.startsWith("autofix_"))  return STEP_CYCLES.autofix;
+  return STEP_CYCLES[step] ?? ["Working..."];
+}
+
+function getDoneLabel(step: string, detail: string): string {
+  if (step === "start")   return "Understood the request";
+  if (step === "analyze") return `Analyzed — ${detail.split(":")[1]?.trim() ?? detail}`;
+  if (step === "retrieve")return `Loaded ${detail}`;
+  if (step === "plan")    return `Planned ${detail}`;
+  if (step === "build")   return "App launched";
+  if (step.match(/^codegen_\d+$/)) {
+    const f = detail.split(":")[1]?.trim().split(" ")[0] ?? "file";
+    return `Wrote ${f}`;
+  }
+  if (step.match(/^autofix_\d+$/)) return `Fixed error — ${detail}`;
+  return detail || step;
+}
+
+// Cycles through messages while a step is active
+function CyclingMessage({ step, detail }: { step: string; detail: string }) {
+  const msgs = getStepCycle(step);
+  const [idx, setIdx] = useState(0);
+  const [visible, setVisible] = useState(true);
+
+  useEffect(() => {
+    if (msgs.length <= 1) return;
+    const t = setInterval(() => {
+      setVisible(false);
+      setTimeout(() => { setIdx(i => (i + 1) % msgs.length); setVisible(true); }, 300);
+    }, 2000);
+    return () => clearInterval(t);
+  }, [step, msgs.length]);
+
+  const msg = msgs[idx] ?? detail;
+  return (
+    <span className="text-xs text-[#777] transition-opacity duration-300" style={{ opacity: visible ? 1 : 0 }}>
+      {msg}
+    </span>
+  );
+}
+
+// For codegen steps: line-by-line code writing animation
+function CodeWriteAnimation({ detail }: { detail: string }) {
+  const [activeLine, setActiveLine] = useState(0);
+  const filename = detail.split(":")[1]?.trim().split(" ")[0] ?? "file.js";
+
+  useEffect(() => {
+    setActiveLine(0);
+    const t = setInterval(() => setActiveLine(l => (l + 1) % CODE_LINES.length), 220);
+    return () => clearInterval(t);
+  }, [detail]);
 
   return (
-    <div className="rounded-[15px] border border-[#2a2a2a] overflow-hidden bg-[#0a0a0a] mt-2 mb-1">
-      <div className="relative overflow-hidden px-4 py-3 font-mono text-xs leading-[1.6] select-none">
-        {CODE_LINES.map((l, i) => (
-          <div key={i} className="flex gap-3">
-            <span className="text-[#2a2a2a] w-4 text-right flex-shrink-0">{i + 1}</span>
-            <span style={{ color: l.color || "#333" }}>{l.text || " "}</span>
-          </div>
-        ))}
-        <div className="pointer-events-none absolute left-0 right-0 h-7 bg-gradient-to-b from-transparent via-white/[0.04] to-transparent"
-          style={{ animation: "scan 1.8s ease-in-out infinite" }} />
-        <div className="flex gap-3 mt-0.5">
-          <span className="text-[#2a2a2a] w-4 text-right flex-shrink-0">{CODE_LINES.length + 1}</span>
-          <span className="inline-block w-[7px] h-[13px] bg-white/40 align-middle"
-            style={{ animation: "blink 1s step-end infinite" }} />
+    <div className="rounded-[12px] border border-[#1e1e1e] overflow-hidden bg-[#080808]">
+      {/* Fake window chrome */}
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-[#111]">
+        <div className="flex gap-1.5">
+          <div className="w-2 h-2 rounded-full bg-[#ff5f57]/30" />
+          <div className="w-2 h-2 rounded-full bg-[#febc2e]/30" />
+          <div className="w-2 h-2 rounded-full bg-[#28c840]/30" />
         </div>
+        <span className="text-[10px] text-[#333] font-mono">{filename}</span>
       </div>
-      <div className="border-t border-[#1a1a1a] px-4 py-2.5 flex items-center gap-2.5 bg-[#060606]">
-        <span className="w-3 h-3 border border-[#444] border-t-transparent rounded-full flex-shrink-0"
-          style={{ animation: "spin 0.9s linear infinite" }} />
-        <span className="text-xs text-[#555] capitalize truncate">
-          {latest ? `${label(latest.step)}${latest.detail ? " — " + latest.detail : ""}` : "working..."}
-        </span>
+
+      {/* Lines */}
+      <div className="px-2 pt-2 pb-1 font-mono text-[10.5px] leading-[1.7] select-none">
+        {CODE_LINES.map((line, i) => {
+          const dist = Math.abs(i - activeLine);
+          const isActive = i === activeLine;
+          // Smooth opacity falloff: full on active, fades up and down
+          const opacity = isActive ? 1 : dist === 1 ? 0.45 : dist === 2 ? 0.18 : 0.05;
+          return (
+            <div key={i}
+              className={`flex gap-2 ${isActive ? "-mx-2 px-2 bg-white/[0.025]" : ""}`}
+              style={{ opacity, transition: "opacity 0.18s ease" }}>
+              <span className="text-[#1c1c1c] w-4 text-right flex-shrink-0 select-none">{i + 1}</span>
+              <span style={{ color: line.c || "#222" }}>{line.t || " "}</span>
+              {isActive && (
+                <span className="inline-block w-[5px] h-[11px] bg-white/50 self-center flex-shrink-0"
+                  style={{ animation: "blink 0.7s step-end infinite" }} />
+              )}
+            </div>
+          );
+        })}
       </div>
+
+      {/* Footer */}
+      <div className="border-t border-[#111] px-3 py-2 flex items-center gap-2 bg-[#050505]">
+        <span className="w-2.5 h-2.5 border border-[#333] border-t-[#666] rounded-full flex-shrink-0"
+          style={{ animation: "spin 0.8s linear infinite" }} />
+        <span className="text-[11px] text-[#444] truncate font-mono">Writing {filename}...</span>
+      </div>
+    </div>
+  );
+}
+
+// Main build feed shown while task is active
+function BuildFeed({ log, taskStatus }: { log: TaskRecord["agent_log"]; taskStatus: string }) {
+  const running = [...log].reverse().find(e => e.status === "running");
+  const done    = log.filter(e => e.status === "done");
+  const isCodegen = running?.step.match(/^codegen_\d+$/);
+
+  return (
+    <div className="mt-2 mb-1 space-y-1.5">
+      {/* Last 2 completed steps as faded history */}
+      {done.slice(-2).map((e, i) => (
+        <div key={i} className="flex items-center gap-2 text-[11px] text-[#2a2a2a]"
+          style={{ animation: "fadeIn 0.4s ease" }}>
+          <svg className="w-3 h-3 flex-shrink-0 text-green-500/25" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+          </svg>
+          <span className="truncate">{getDoneLabel(e.step, e.detail)}</span>
+        </div>
+      ))}
+
+      {/* Current running step */}
+      {running && (
+        <div style={{ animation: "fadeSlideIn 0.35s ease" }}>
+          {isCodegen ? (
+            <CodeWriteAnimation detail={running.detail} />
+          ) : (
+            <div className="flex items-center gap-2.5 py-0.5">
+              <span className="w-3 h-3 border border-[#2a2a2a] border-t-[#666] rounded-full flex-shrink-0"
+                style={{ animation: "spin 0.8s linear infinite" }} />
+              <CyclingMessage step={running.step} detail={running.detail} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {taskStatus === "queued" && !running && (
+        <div className="flex items-center gap-2 text-[11px] text-[#2a2a2a]">
+          <span className="w-3 h-3 border border-[#1e1e1e] border-t-[#444] rounded-full"
+            style={{ animation: "spin 1.2s linear infinite" }} />
+          In queue...
+        </div>
+      )}
+
       <style>{`
-        @keyframes scan  { 0%{top:-28px} 100%{top:100%} }
-        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
-        @keyframes spin  { to{transform:rotate(360deg)} }
+        @keyframes spin        { to{transform:rotate(360deg)} }
+        @keyframes blink       { 0%,100%{opacity:1} 50%{opacity:0} }
+        @keyframes fadeIn      { from{opacity:0} to{opacity:1} }
+        @keyframes fadeSlideIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
       `}</style>
     </div>
   );
 }
 
-// ─── Step list ────────────────────────────────────────────────────────────────
-function StepList({ log, status }: { log: TaskRecord["agent_log"]; status: string }) {
-  const dot: Record<string,string> = { running: "bg-yellow-400 animate-pulse", done: "bg-green-500", error: "bg-red-500" };
-  const lbl = (s: string) => s.replace(/^codegen_\d+$/, "codegen").replace(/^autofix_\d+$/, "autofix").replace(/_/g, " ");
+// ─── Step list (expandable inside completed messages) ─────────────────────────
+function StepList({ log }: { log: TaskRecord["agent_log"] }) {
+  const dot: Record<string,string> = { done: "bg-green-500", error: "bg-red-500", running: "bg-yellow-400" };
   return (
-    <div className="mt-2 space-y-1.5 text-[11px] font-mono text-[#444]">
+    <div className="mt-1.5 space-y-1.5 text-[11px] font-mono text-[#444]">
       {log.map((e, i) => (
         <div key={i} className="flex items-start gap-2">
           <span className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${dot[e.status] ?? "bg-[#333]"}`} />
-          <span className="w-20 flex-shrink-0 capitalize text-[#555]">{lbl(e.step)}</span>
-          <span className="truncate">{e.detail}</span>
+          <span className="truncate">{getDoneLabel(e.step, e.detail)}</span>
         </div>
       ))}
-      {status === "running" && (
-        <div className="flex items-center gap-2 text-[#444] pl-3">
-          <span className="w-2.5 h-2.5 border border-[#444] border-t-transparent rounded-full"
-            style={{ animation: "spin 0.9s linear infinite" }} />
-          Working...
-        </div>
-      )}
     </div>
   );
 }
@@ -142,7 +259,7 @@ function ChatMessage({ task }: { task: TaskRecord }) {
           AI
         </div>
         <div className="flex-1 min-w-0">
-          {isActive && <BuildAnimation log={task.agent_log} />}
+          {isActive && <BuildFeed log={task.agent_log} taskStatus={task.status} />}
           {(isDone || isError || (!isActive && task.agent_log.length > 0)) && (
             <div className="bg-[#111] border border-[#1e1e1e] rounded-[15px] rounded-tl-[4px] px-4 py-3 text-sm space-y-2.5">
               {isDone  && <p className="text-white">Done! Here&apos;s what I&apos;ve built.</p>}
@@ -153,7 +270,7 @@ function ChatMessage({ task }: { task: TaskRecord }) {
                   <ChevronIcon open={stepsOpen} /> See steps
                 </button>
               )}
-              {stepsOpen && <StepList log={task.agent_log} status={task.status} />}
+              {stepsOpen && <StepList log={task.agent_log} />}
               {changedFiles.length > 0 && (
                 <div className="pt-2 border-t border-[#1a1a1a]">
                   <p className="text-[11px] text-[#333] mb-1.5">Updates</p>
@@ -256,9 +373,148 @@ function WarningsPanel({ tasks }: { tasks: TaskRecord[] }) {
 function TB({ onClick, active, title, children }: { onClick?: () => void; active?: boolean; title: string; children: React.ReactNode }) {
   return (
     <button onClick={onClick} title={title}
-      className={`p-1.5 rounded-[8px] transition-colors ${active ? "bg-[#222] text-white" : "text-[#444] hover:text-white hover:bg-[#1a1a1a]"}`}>
+      className={`p-1.5 rounded-[8px] transition-colors text-white ${active ? "bg-[#252525]" : "opacity-60 hover:opacity-100 hover:bg-[#1a1a1a]"}`}>
       {children}
     </button>
+  );
+}
+
+// ─── Shimmer text ─────────────────────────────────────────────────────────────
+function ShimmerText({ text }: { text: string }) {
+  return (
+    <div className="relative select-none">
+      {/* Base layer — dim */}
+      <span className="text-2xl font-light tracking-wide text-[#1e1e1e]">{text}</span>
+      {/* Shimmer layer on top */}
+      <span
+        className="absolute inset-0 text-2xl font-light tracking-wide bg-clip-text text-transparent"
+        style={{
+          backgroundImage: "linear-gradient(90deg, #1e1e1e 0%, #1e1e1e 30%, #777 48%, #fff 50%, #777 52%, #1e1e1e 70%, #1e1e1e 100%)",
+          backgroundSize: "300% 100%",
+          animation: "shimmerMove 3s ease-in-out infinite",
+          WebkitBackgroundClip: "text",
+        }}
+      >
+        {text}
+      </span>
+      <style>{`
+        @keyframes shimmerMove {
+          0%   { background-position: 130% center; }
+          100% { background-position: -30% center; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+// ─── URL bar with dropdown + edit ─────────────────────────────────────────────
+interface PageEntry { route: string; label: string; }
+
+function getProjectPages(files: { file_path: string }[]): PageEntry[] {
+  const pages: PageEntry[] = [];
+  for (const f of files) {
+    if (!f.file_path.startsWith("pages/")) continue;
+    if (f.file_path.startsWith("pages/_")) continue;
+    const clean = f.file_path.replace(/^pages\//, "").replace(/\.(js|jsx|ts|tsx)$/, "");
+    const route = clean === "index" ? "/" : `/${clean}`;
+    const label = clean === "index" ? "Home" : clean.charAt(0).toUpperCase() + clean.slice(1).replace(/[-_]/g, " ");
+    pages.push({ route, label });
+  }
+  return pages.sort((a, b) => a.route.localeCompare(b.route));
+}
+
+function UrlBar({
+  previewUrl, isReady, isBuilding, pages, currentRoute, pageLabels,
+  onRouteChange, onLabelSave,
+}: {
+  previewUrl: string | null; isReady: boolean; isBuilding: boolean;
+  pages: PageEntry[]; currentRoute: string;
+  pageLabels: Record<string, string>;
+  onRouteChange: (r: string) => void;
+  onLabelSave: (route: string, label: string) => void;
+}) {
+  const [open, setOpen]     = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [editVal, setEditVal] = useState("");
+
+  const label = pageLabels[currentRoute] ?? pages.find(p => p.route === currentRoute)?.label ?? currentRoute;
+  const fullUrl = previewUrl ? `${previewUrl}${currentRoute === "/" ? "" : currentRoute}` : null;
+
+  function startEdit() {
+    setEditing(true);
+    setEditVal(label);
+    setOpen(false);
+  }
+  function commitEdit() {
+    if (editVal.trim()) onLabelSave(currentRoute, editVal.trim());
+    setEditing(false);
+  }
+
+  return (
+    <div className="relative flex-1 mx-2">
+      <div className={`flex items-center bg-black border rounded-[10px] px-2 h-7 gap-1.5 transition-colors ${open ? "border-[#333]" : "border-[#1e1e1e]"}`}>
+        {/* Status dot */}
+        <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 transition-colors ${isReady ? "bg-green-500" : isBuilding ? "bg-yellow-400 animate-pulse" : "bg-[#2a2a2a]"}`} />
+
+        {/* Label / input */}
+        {editing ? (
+          <input
+            autoFocus
+            value={editVal}
+            onChange={e => setEditVal(e.target.value)}
+            onBlur={commitEdit}
+            onKeyDown={e => { if (e.key === "Enter") commitEdit(); if (e.key === "Escape") setEditing(false); }}
+            className="flex-1 bg-transparent text-xs text-white outline-none min-w-0"
+          />
+        ) : (
+          <button
+            onClick={() => pages.length > 1 && setOpen(o => !o)}
+            className="flex items-center gap-1.5 flex-1 min-w-0 text-left"
+          >
+            <span className="text-[11px] text-[#888] truncate">{label}</span>
+            {fullUrl && (
+              <span className="text-[10px] text-[#333] truncate hidden 2xl:block">{fullUrl}</span>
+            )}
+            {pages.length > 1 && (
+              <svg className={`w-2.5 h-2.5 flex-shrink-0 text-[#333] transition-transform ${open ? "rotate-180" : ""}`}
+                fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            )}
+          </button>
+        )}
+
+        {/* Pen icon */}
+        <button onClick={startEdit} title="Rename page" className="text-[#2a2a2a] hover:text-white transition-colors flex-shrink-0 p-0.5">
+          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+          </svg>
+        </button>
+      </div>
+
+      {/* Dropdown */}
+      {open && pages.length > 0 && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute top-full mt-1 left-0 min-w-[180px] bg-[#111] border border-[#222] rounded-[10px] overflow-hidden z-50 shadow-xl">
+            {pages.map(p => {
+              const lbl = pageLabels[p.route] ?? p.label;
+              const isCurrent = p.route === currentRoute;
+              return (
+                <button key={p.route}
+                  onClick={() => { onRouteChange(p.route); setOpen(false); }}
+                  className={`w-full flex items-center gap-2.5 px-3 py-2 text-xs text-left hover:bg-[#1a1a1a] transition-colors ${isCurrent ? "text-white" : "text-[#555]"}`}>
+                  <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${isCurrent ? "bg-green-500" : "bg-[#222]"}`} />
+                  <span className="flex-1">{lbl}</span>
+                  <span className="text-[#2a2a2a] font-mono">{p.route}</span>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -278,6 +534,8 @@ export default function ProjectPage() {
   const [deviceMode,   setDeviceMode]   = useState<"desktop"|"mobile">("desktop");
   const [activePanel,  setActivePanel]  = useState<"console"|"errors"|"warnings"|null>(null);
   const [previewKey,   setPreviewKey]   = useState(0);
+  const [currentRoute, setCurrentRoute] = useState("/");
+  const [pageLabels,   setPageLabels]   = useState<Record<string, string>>({});
   const [prompt,       setPrompt]       = useState("");
   const [sending,      setSending]      = useState(false);
   const [sendError,    setSendError]    = useState("");
@@ -352,6 +610,8 @@ export default function ProjectPage() {
   const previewUrl  = previewPort ? `http://localhost:${previewPort}` : null;
   const errorCount  = tasks.filter(t => t.status === "error").length;
   const warnCount   = tasks.filter(t => t.agent_log.some(e => e.step.startsWith("autofix"))).length;
+  const projectPages = getProjectPages(files);
+  const iframeSrc   = previewUrl ? `${previewUrl}${currentRoute === "/" ? "" : currentRoute}` : null;
 
   return (
     <div className="h-screen flex bg-black text-white overflow-hidden p-2 gap-2">
@@ -432,14 +692,16 @@ export default function ProjectPage() {
           <TB onClick={() => setPreviewKey(k => k + 1)} title="Reload preview"><RefreshIcon /></TB>
 
           {/* URL bar */}
-          <div className="flex-1 mx-2">
-            <div className="flex items-center bg-black border border-[#1e1e1e] rounded-[10px] px-3 h-7 gap-2">
-              <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 transition-colors ${isReady ? "bg-green-500" : isBuilding ? "bg-yellow-400 animate-pulse" : "bg-[#2a2a2a]"}`} />
-              <span className="text-[11px] text-[#333] truncate font-mono">
-                {previewUrl ?? (isBuilding ? "Building..." : "Not running")}
-              </span>
-            </div>
-          </div>
+          <UrlBar
+            previewUrl={previewUrl}
+            isReady={isReady}
+            isBuilding={isBuilding}
+            pages={projectPages}
+            currentRoute={currentRoute}
+            pageLabels={pageLabels}
+            onRouteChange={r => { setCurrentRoute(r); setPreviewKey(k => k + 1); }}
+            onLabelSave={(route, label) => setPageLabels(pl => ({ ...pl, [route]: label }))}
+          />
 
           <TB title="Share (coming soon)">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -447,8 +709,8 @@ export default function ProjectPage() {
             </svg>
           </TB>
           {previewUrl && (
-            <a href={previewUrl} target="_blank" rel="noopener noreferrer" title="Open in new tab"
-              className="p-1.5 text-[#444] hover:text-white hover:bg-[#1a1a1a] rounded-[8px] transition-colors">
+            <a href={iframeSrc ?? previewUrl} target="_blank" rel="noopener noreferrer" title="Open in new tab"
+              className="p-1.5 text-white opacity-60 hover:opacity-100 hover:bg-[#1a1a1a] rounded-[8px] transition-all">
               <ExternalIcon />
             </a>
           )}
@@ -465,20 +727,19 @@ export default function ProjectPage() {
           <div className="flex-1 overflow-hidden">
             {view === "preview" ? (
               <div className="h-full flex items-center justify-center bg-[#060606]">
-                {previewUrl && isReady ? (
+                {iframeSrc && isReady ? (
                   <div className={`h-full bg-white overflow-hidden transition-all duration-300 ${deviceMode === "mobile" ? "w-[390px] rounded-[20px] my-4 shadow-2xl" : "w-full"}`}>
-                    <iframe key={previewKey} src={previewUrl} className="w-full h-full border-0" title="preview" />
+                    <iframe key={`${previewKey}-${currentRoute}`} src={iframeSrc} className="w-full h-full border-0" title="preview" />
                   </div>
                 ) : (
-                  <div className="flex flex-col items-center gap-3 text-[#2a2a2a]">
-                    {isBuilding ? (
-                      <>
-                        <span className="w-7 h-7 border-2 border-[#2a2a2a] border-t-[#666] rounded-full"
-                          style={{ animation: "spin 0.8s linear infinite" }} />
-                        <span className="text-sm text-[#333]">Building your app...</span>
-                      </>
-                    ) : (
-                      <span className="text-sm">Preview will appear here once ready</span>
+                  <div className="flex flex-col items-center gap-4">
+                    <ShimmerText text={isBuilding ? "Building your app..." : "Your preview will appear"} />
+                    {isBuilding && (
+                      <div className="flex items-center gap-2 text-[#2a2a2a] text-xs">
+                        <span className="w-3 h-3 border border-[#2a2a2a] border-t-[#555] rounded-full"
+                          style={{ animation: "spin 0.9s linear infinite" }} />
+                        Compiling...
+                      </div>
                     )}
                   </div>
                 )}
