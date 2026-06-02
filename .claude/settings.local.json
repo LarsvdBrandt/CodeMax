@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker compose *)",
+      "Bash(curl -s -X POST http://localhost:8000/auth/register -H 'Content-Type: application/json' -d '{\"email\":\"test@test.com\",\"password\":\"password123\"}')",
+      "Bash(curl -v http://localhost:8000/health)",
+      "Bash(docker volume *)"
+    ]
+  }
+}
