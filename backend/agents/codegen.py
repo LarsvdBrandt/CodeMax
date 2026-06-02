@@ -1,5 +1,6 @@
 """Generates file content for each planned task."""
 import os
+import json
 from openai import AsyncOpenAI
 
 client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
@@ -46,6 +47,39 @@ Write the complete new content for {file_path}. Return ONLY the file content."""
         ],
     )
     return _strip_fences(response.choices[0].message.content)
+
+
+async def fix_errors(error_log: str, file_contents: dict[str, str]) -> dict[str, str]:
+    """Given Next.js compilation errors and current files, return fixed file contents."""
+    files_text = "\n\n".join(
+        f"=== {path} ===\n{content}" for path, content in file_contents.items()
+    )
+    response = await client.chat.completions.create(
+        model="gpt-4o",
+        response_format={"type": "json_object"},
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a Next.js debugging expert. Fix compilation errors.\n"
+                    "STRICT RULES:\n"
+                    "- Do NOT use any external npm packages. Only React, Next.js built-ins, and Tailwind CSS.\n"
+                    "- If an import uses an unknown package, rewrite the component without it.\n"
+                    "- Return JSON: {\"files\": {\"relative/path.js\": \"complete fixed file content\"}}\n"
+                    "- Only include files that need changes. Return raw code, no markdown fences."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"Compilation errors:\n{error_log[-3000:]}\n\nCurrent files:\n{files_text}\n\nFix all errors.",
+            },
+        ],
+    )
+    result = json.loads(response.choices[0].message.content)
+    return {
+        path: _strip_fences(content)
+        for path, content in result.get("files", {}).items()
+    }
 
 
 async def generate_architecture_summary(

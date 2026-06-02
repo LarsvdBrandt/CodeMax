@@ -102,6 +102,60 @@ def _wait_for_http(project_id: str, timeout: int = 120) -> bool:
     return False
 
 
+ERROR_INDICATORS = [
+    "Module not found",
+    "Failed to compile",
+    "SyntaxError",
+    "Cannot find module",
+    "ReferenceError",
+    "TypeError:",
+]
+
+
+def stop_container(project_id: str) -> bool:
+    dc = _docker_client()
+    try:
+        c = dc.containers.get(f"codemax_preview_{project_id}")
+        c.stop(timeout=5)
+        return True
+    except docker.errors.NotFound:
+        return False
+
+
+def restart_container(project_id: str) -> bool:
+    dc = _docker_client()
+    try:
+        c = dc.containers.get(f"codemax_preview_{project_id}")
+        c.start()
+        return True
+    except docker.errors.NotFound:
+        return False
+
+
+def get_container_logs(project_id: str, tail: int = 150) -> list[str]:
+    dc = _docker_client()
+    try:
+        c = dc.containers.get(f"codemax_preview_{project_id}")
+        raw = c.logs(tail=tail, timestamps=True).decode(errors="replace")
+        return raw.splitlines()
+    except docker.errors.NotFound:
+        return []
+
+
+def get_container_errors(project_id: str, wait_seconds: int = 6) -> str | None:
+    """Wait for Next.js to (re)compile, then return error log if any errors found."""
+    time.sleep(wait_seconds)
+    dc = _docker_client()
+    try:
+        container = dc.containers.get(f"codemax_preview_{project_id}")
+        logs = container.logs(tail=200).decode(errors="replace")
+        if any(indicator in logs for indicator in ERROR_INDICATORS):
+            return logs
+    except Exception:
+        pass
+    return None
+
+
 def start_or_rebuild_container(project_id: str, existing_container_id: str | None) -> tuple[str, int]:
     dc = _docker_client()
 

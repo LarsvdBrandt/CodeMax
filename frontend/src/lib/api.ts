@@ -69,6 +69,14 @@ export interface AgentLogEntry {
   detail: string;
 }
 
+export interface TaskRecord {
+  id: string;
+  prompt: string;
+  status: string;
+  agent_log: AgentLogEntry[];
+  created_at: string;
+}
+
 export interface ProjectStatus {
   status: string;
   preview_port: number | null;
@@ -107,6 +115,22 @@ export async function sendPrompt(id: string, prompt: string): Promise<{ task_id:
 
 export async function retryProject(id: string): Promise<{ task_id: string }> {
   return request(`/projects/${id}/retry`, { method: "POST" });
+}
+
+export async function listTasks(id: string): Promise<TaskRecord[]> {
+  return request(`/projects/${id}/tasks`);
+}
+
+export async function stopPreview(id: string): Promise<void> {
+  return request(`/projects/${id}/stop`, { method: "POST" });
+}
+
+export async function startPreview(id: string): Promise<void> {
+  return request(`/projects/${id}/start`, { method: "POST" });
+}
+
+export async function getPreviewLogs(id: string): Promise<{ lines: string[] }> {
+  return request(`/projects/${id}/logs`);
 }
 
 export async function listFiles(id: string): Promise<ProjectFile[]> {

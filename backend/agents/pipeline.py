@@ -10,8 +10,8 @@ from models import Task, Project, ProjectFile, ProjectStatus, TaskStatus
 from agents.analyzer import analyze
 from agents.retriever import retrieve_context
 from agents.planner import plan
-from agents.codegen import generate_file, generate_architecture_summary
-from agents.builder import provision_preview, seed_template
+from agents.codegen import generate_file, generate_architecture_summary, fix_errors
+from agents.builder import provision_preview, seed_template, get_container_errors
 
 PROJECTS_DIR = os.environ.get("PROJECTS_DIR", "/projects")
 
@@ -188,13 +188,76 @@ async def run_pipeline(task_id: str, project_id: str, prompt: str, db: AsyncSess
 
         project.container_id = container_id
         project.preview_port = port
-        project.status = ProjectStatus.ready if is_ready else ProjectStatus.error
         project.updated_at = _now()
 
-        task.status = TaskStatus.done if is_ready else TaskStatus.error
-        build_detail = f"Container ready on port {port}" if is_ready else "Container timed out"
-        log = _log_step(log, "build", "done" if is_ready else "error", build_detail)
+        if not is_ready:
+            project.status = ProjectStatus.error
+            task.status = TaskStatus.error
+            log = _log_step(log, "build", "error", "Container timed out")
+            await _save_log(db, task, log)
+            await db.commit()
+            return
+
+        log = _log_step(log, "build", "done", f"Container ready on port {port}")
         await _save_log(db, task, log)
+
+        # Step 9 — Auto-fix compilation errors (up to 3 rounds)
+        for fix_attempt in range(3):
+            error_log_text = get_container_errors(project_id)
+            if not error_log_text:
+                break
+
+            log = _log_step(
+                log, f"autofix_{fix_attempt}", "running",
+                f"Compilation error detected, fixing (attempt {fix_attempt + 1}/3)..."
+            )
+            await _save_log(db, task, log)
+
+            # Gather current app files as context (skip meta)
+            cur_files_result = await db.execute(
+                select(ProjectFile).where(ProjectFile.project_id == project_uuid)
+            )
+            file_contents = {
+                f.file_path: f.content
+                for f in cur_files_result.scalars().all()
+                if not f.file_path.startswith("_meta/")
+            }
+
+            fixed = await fix_errors(error_log_text, file_contents)
+
+            for file_path, content in fixed.items():
+                dest = project_dir / file_path
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_text(content)
+
+                fix_result = await db.execute(
+                    select(ProjectFile).where(
+                        ProjectFile.project_id == project_uuid,
+                        ProjectFile.file_path == file_path,
+                    )
+                )
+                fix_file = fix_result.scalar_one_or_none()
+                if fix_file:
+                    fix_file.content = content
+                    fix_file.updated_at = _now()
+                else:
+                    db.add(ProjectFile(
+                        id=uuid.uuid4(),
+                        project_id=project_uuid,
+                        file_path=file_path,
+                        content=content,
+                    ))
+
+            await db.commit()
+            log = _log_step(
+                log, f"autofix_{fix_attempt}", "done",
+                f"Rewrote {len(fixed)} file(s)"
+            )
+            await _save_log(db, task, log)
+
+        project.status = ProjectStatus.ready
+        project.updated_at = _now()
+        task.status = TaskStatus.done
         await db.commit()
 
     except Exception as exc:
