@@ -38,197 +38,215 @@ const ChevronIcon = ({ open }: { open: boolean }) => (
   </svg>
 );
 
-// ─── Build feed ───────────────────────────────────────────────────────────────
+// ─── Build feed — streaming step animation ────────────────────────────────────
 
+const STEP_MSGS: Record<string, string[]> = {
+  start:    ["Thinking...", "Understanding your request...", "Getting ready..."],
+  analyze:  ["Analyzing codebase...", "Reading file structure...", "Identifying what to change..."],
+  retrieve: ["Loading context...", "Reading relevant files...", "Gathering code context..."],
+  plan:     ["Planning changes...", "Deciding what to update...", "Mapping out the approach..."],
+  build:    ["Starting server...", "Installing packages...", "Booting preview..."],
+  autofix:  ["Found a compile error...", "Diagnosing the issue...", "Rewriting the fix..."],
+};
+
+function getDoneLabel(step: string, detail: string): string {
+  if (step === "start")    return "Understood your request";
+  if (step === "analyze")  return `Analyzed codebase`;
+  if (step === "retrieve") return `Loaded context`;
+  if (step === "plan")     return `Created a plan`;
+  if (step === "build")    return "Preview launched";
+  if (step.match(/^codegen_\d+$/)) {
+    const f = detail.split(":")[1]?.trim().split(" ")[0] ?? "file";
+    return `Wrote ${f}`;
+  }
+  if (step.match(/^autofix_\d+$/)) return `Fixed compilation error`;
+  return detail || step;
+}
+
+// Single step row — fades in from below
+function StepRow({ label, done, active, index }: { label: string; done?: boolean; active?: boolean; index: number }) {
+  return (
+    <div className="flex items-center gap-2.5"
+      style={{ animation: `stepIn 0.28s cubic-bezier(0.16,1,0.3,1) both`, animationDelay: `${index * 30}ms` }}>
+      <div className="relative flex-shrink-0 w-3.5 h-3.5 flex items-center justify-center">
+        {done ? (
+          <svg className="w-3 h-3 text-green-500/50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+          </svg>
+        ) : active ? (
+          <span className="w-1.5 h-1.5 rounded-full bg-white/60"
+            style={{ animation: "activePulse 1.4s ease-in-out infinite" }} />
+        ) : (
+          <span className="w-1 h-1 rounded-full bg-[#2a2a2a]" />
+        )}
+      </div>
+      <span className={`text-xs leading-relaxed truncate transition-colors duration-500 ${
+        done ? "text-[#2e2e2e]" : active ? "text-[#aaa]" : "text-[#2a2a2a]"
+      }`}>
+        {label}
+      </span>
+    </div>
+  );
+}
+
+// Cycling label for the active step
+function ActiveStepLabel({ step, detail }: { step: string; detail: string }) {
+  const base = step.startsWith("codegen_") ? "autofix" : step.startsWith("autofix_") ? "autofix" : step;
+  const msgs  = STEP_MSGS[base] ?? [detail || step.replace(/_/g, " ")];
+
+  const [idx,     setIdx]     = useState(0);
+  const [visible, setVisible] = useState(true);
+
+  useEffect(() => {
+    setIdx(0); setVisible(true);
+    if (msgs.length <= 1) return;
+    const t = setInterval(() => {
+      setVisible(false);
+      setTimeout(() => { setIdx(i => (i + 1) % msgs.length); setVisible(true); }, 220);
+    }, 1800);
+    return () => clearInterval(t);
+  }, [step, msgs.length]);
+
+  // For codegen, show filename instead
+  if (step.match(/^codegen_\d+$/)) {
+    const file = detail.split(":")[1]?.trim().split(" ")[0] ?? "file";
+    return (
+      <span className="text-xs text-[#aaa] font-mono truncate">
+        Writing <span className="text-white/70">{file}</span>
+        <span style={{ animation: "blink 0.8s step-end infinite" }}>▎</span>
+      </span>
+    );
+  }
+
+  return (
+    <span className="text-xs text-[#aaa] transition-opacity duration-200"
+      style={{ opacity: visible ? 1 : 0 }}>
+      {msgs[idx]}
+    </span>
+  );
+}
+
+// Code lines used in the animation
 const CODE_LINES = [
   { t: "import { useState, useEffect } from 'react';", c: "#6b9bd2" },
   { t: "import Head from 'next/head';",                c: "#6b9bd2" },
-  { t: "",                                             c: "" },
   { t: "export default function App() {",             c: "#c792ea" },
   { t: "  const [data, setData] = useState([]);",     c: "#a3be8c" },
   { t: "  const [loading, setLoading] = useState(false);", c: "#a3be8c" },
-  { t: "",                                             c: "" },
-  { t: "  useEffect(() => {",                         c: "#ffd700" },
-  { t: "    fetchData();",                             c: "#d8dee9" },
-  { t: "  }, []);",                                   c: "#ffd700" },
-  { t: "",                                             c: "" },
+  { t: "  useEffect(() => { fetchData(); }, []);",    c: "#ffd700" },
   { t: "  return (",                                  c: "#d8dee9" },
   { t: "    <main className=\"min-h-screen\">",       c: "#88c0d0" },
   { t: "      {data.map(item => (",                   c: "#d8dee9" },
   { t: "        <Card key={item.id} {...item} />",     c: "#88c0d0" },
   { t: "      ))}",                                   c: "#d8dee9" },
-  { t: "    </main>",                                  c: "#88c0d0" },
+  { t: "    </main>",                                 c: "#88c0d0" },
   { t: "  );",                                        c: "#d8dee9" },
   { t: "}",                                           c: "#c792ea" },
 ];
 
-const STEP_CYCLES: Record<string, string[]> = {
-  start:    ["Thinking about your request...", "Understanding what you need...", "Preparing a response..."],
-  analyze:  ["Analyzing the codebase...", "Identifying relevant files...", "Understanding the current structure..."],
-  retrieve: ["Loading file context...", "Reading relevant code...", "Building context for the AI..."],
-  plan:     ["Planning the changes...", "Deciding what files to update...", "Mapping out the approach..."],
-  build:    ["Installing npm packages...", "Starting the Next.js server...", "Warming up the preview..."],
-  autofix:  ["Detected a compilation error...", "Analyzing the error message...", "Rewriting the affected file..."],
-};
-
-function getStepCycle(step: string): string[] {
-  if (step.startsWith("codegen_"))  return [];    // handled separately
-  if (step.startsWith("autofix_"))  return STEP_CYCLES.autofix;
-  return STEP_CYCLES[step] ?? ["Working..."];
-}
-
-function getDoneLabel(step: string, detail: string): string {
-  if (step === "start")   return "Understood the request";
-  if (step === "analyze") return `Analyzed — ${detail.split(":")[1]?.trim() ?? detail}`;
-  if (step === "retrieve")return `Loaded ${detail}`;
-  if (step === "plan")    return `Planned ${detail}`;
-  if (step === "build")   return "App launched";
-  if (step.match(/^codegen_\d+$/)) {
-    const f = detail.split(":")[1]?.trim().split(" ")[0] ?? "file";
-    return `Wrote ${f}`;
-  }
-  if (step.match(/^autofix_\d+$/)) return `Fixed error — ${detail}`;
-  return detail || step;
-}
-
-// Cycles through messages while a step is active
-function CyclingMessage({ step, detail }: { step: string; detail: string }) {
-  const msgs = getStepCycle(step);
-  const [idx, setIdx] = useState(0);
-  const [visible, setVisible] = useState(true);
+// Compact 3-line code animation — no border/chrome, just pure code
+function CodegenRow({ detail, index }: { detail: string; index: number }) {
+  const file = detail.split(":")[1]?.trim().split(" ")[0] ?? "file";
+  const [active, setActive] = useState(2);
 
   useEffect(() => {
-    if (msgs.length <= 1) return;
-    const t = setInterval(() => {
-      setVisible(false);
-      setTimeout(() => { setIdx(i => (i + 1) % msgs.length); setVisible(true); }, 300);
-    }, 2000);
-    return () => clearInterval(t);
-  }, [step, msgs.length]);
-
-  const msg = msgs[idx] ?? detail;
-  return (
-    <span className="text-xs text-[#777] transition-opacity duration-300" style={{ opacity: visible ? 1 : 0 }}>
-      {msg}
-    </span>
-  );
-}
-
-// For codegen steps: line-by-line code writing animation
-function CodeWriteAnimation({ detail }: { detail: string }) {
-  const [activeLine, setActiveLine] = useState(0);
-  const filename = detail.split(":")[1]?.trim().split(" ")[0] ?? "file.js";
-
-  useEffect(() => {
-    setActiveLine(0);
-    const t = setInterval(() => setActiveLine(l => (l + 1) % CODE_LINES.length), 220);
+    setActive(2);
+    const t = setInterval(() => setActive(l => (l + 1) % CODE_LINES.length), 190);
     return () => clearInterval(t);
   }, [detail]);
 
+  // Show prev, active, next — wrapped
+  const wrap = (i: number) => ((i % CODE_LINES.length) + CODE_LINES.length) % CODE_LINES.length;
+  const rows = [
+    { line: CODE_LINES[wrap(active - 1)], opacity: 0.18 },
+    { line: CODE_LINES[active],            opacity: 0.85, cursor: true },
+    { line: CODE_LINES[wrap(active + 1)], opacity: 0.18 },
+  ];
+
   return (
-    <div className="rounded-[12px] border border-[#1e1e1e] overflow-hidden bg-[#080808]">
-      {/* Fake window chrome */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-[#111]">
-        <div className="flex gap-1.5">
-          <div className="w-2 h-2 rounded-full bg-[#ff5f57]/30" />
-          <div className="w-2 h-2 rounded-full bg-[#febc2e]/30" />
-          <div className="w-2 h-2 rounded-full bg-[#28c840]/30" />
+    <div style={{ animation: `stepIn 0.28s cubic-bezier(0.16,1,0.3,1) both`, animationDelay: `${index * 30}ms` }}>
+      {/* Label row */}
+      <div className="flex items-center gap-2.5 mb-1.5">
+        <div className="flex-shrink-0 w-3.5 h-3.5 flex items-center justify-center">
+          <span className="w-1.5 h-1.5 rounded-full bg-white/60"
+            style={{ animation: "activePulse 1.4s ease-in-out infinite" }} />
         </div>
-        <span className="text-[10px] text-[#333] font-mono">{filename}</span>
+        <span className="text-xs font-mono text-[#555]">
+          Writing <span className="text-[#888]">{file}</span>
+        </span>
       </div>
-
-      {/* Lines */}
-      <div className="px-2 pt-2 pb-1 font-mono text-[10.5px] leading-[1.7] select-none">
-        {CODE_LINES.map((line, i) => {
-          const dist = Math.abs(i - activeLine);
-          const isActive = i === activeLine;
-          // Smooth opacity falloff: full on active, fades up and down
-          const opacity = isActive ? 1 : dist === 1 ? 0.45 : dist === 2 ? 0.18 : 0.05;
-          return (
-            <div key={i}
-              className={`flex gap-2 ${isActive ? "-mx-2 px-2 bg-white/[0.025]" : ""}`}
-              style={{ opacity, transition: "opacity 0.18s ease" }}>
-              <span className="text-[#1c1c1c] w-4 text-right flex-shrink-0 select-none">{i + 1}</span>
-              <span style={{ color: line.c || "#222" }}>{line.t || " "}</span>
-              {isActive && (
-                <span className="inline-block w-[5px] h-[11px] bg-white/50 self-center flex-shrink-0"
-                  style={{ animation: "blink 0.7s step-end infinite" }} />
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Footer */}
-      <div className="border-t border-[#111] px-3 py-2 flex items-center gap-2 bg-[#050505]">
-        <span className="w-2.5 h-2.5 border border-[#333] border-t-[#666] rounded-full flex-shrink-0"
-          style={{ animation: "spin 0.8s linear infinite" }} />
-        <span className="text-[11px] text-[#444] truncate font-mono">Writing {filename}...</span>
+      {/* 3 code lines */}
+      <div className="ml-6 font-mono text-[10.5px] leading-[1.65] select-none">
+        {rows.map(({ line, opacity, cursor }, i) => (
+          <div key={i} style={{ opacity, transition: "opacity 0.15s ease" }}
+            className={i === 1 ? "bg-white/[0.03] -mx-1 px-1 rounded-sm" : ""}>
+            <span style={{ color: line.c || "#333" }}>{line.t || " "}</span>
+            {cursor && (
+              <span className="inline-block w-[4px] h-[10px] bg-white/50 align-middle ml-px"
+                style={{ animation: "blink 0.7s step-end infinite" }} />
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
-// Main build feed shown while task is active
 function BuildFeed({ log, taskStatus }: { log: TaskRecord["agent_log"]; taskStatus: string }) {
-  const running = [...log].reverse().find(e => e.status === "running");
   const done    = log.filter(e => e.status === "done");
-  const isCodegen = running?.step.match(/^codegen_\d+$/);
+  const running = [...log].reverse().find(e => e.status === "running");
 
   return (
-    <div className="mt-2 mb-1 space-y-1.5">
-      {/* Last 2 completed steps as faded history */}
-      {done.slice(-2).map((e, i) => (
-        <div key={i} className="flex items-center gap-2 text-[11px] text-[#2a2a2a]"
-          style={{ animation: "fadeIn 0.4s ease" }}>
-          <svg className="w-3 h-3 flex-shrink-0 text-green-500/25" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-          </svg>
-          <span className="truncate">{getDoneLabel(e.step, e.detail)}</span>
-        </div>
+    <div className="pt-1 pb-0.5 space-y-2">
+      {/* All done steps */}
+      {done.map((e, i) => (
+        <StepRow key={i} label={getDoneLabel(e.step, e.detail)} done index={i} />
       ))}
 
-      {/* Current running step */}
+      {/* Active step */}
       {running && (
-        <div style={{ animation: "fadeSlideIn 0.35s ease" }}>
-          {isCodegen ? (
-            <CodeWriteAnimation detail={running.detail} />
-          ) : (
-            <div className="flex items-center gap-2.5 py-0.5">
-              <span className="w-3 h-3 border border-[#2a2a2a] border-t-[#666] rounded-full flex-shrink-0"
-                style={{ animation: "spin 0.8s linear infinite" }} />
-              <CyclingMessage step={running.step} detail={running.detail} />
+        running.step.match(/^codegen_\d+$/)
+          ? <CodegenRow detail={running.detail} index={done.length} />
+          : (
+            <div className="flex items-center gap-2.5"
+              style={{ animation: "stepIn 0.28s cubic-bezier(0.16,1,0.3,1) both" }}>
+              <div className="flex-shrink-0 w-3.5 h-3.5 flex items-center justify-center">
+                <span className="w-1.5 h-1.5 rounded-full bg-white/60"
+                  style={{ animation: "activePulse 1.4s ease-in-out infinite" }} />
+              </div>
+              <ActiveStepLabel step={running.step} detail={running.detail} />
             </div>
-          )}
-        </div>
+          )
       )}
 
       {taskStatus === "queued" && !running && (
-        <div className="flex items-center gap-2 text-[11px] text-[#2a2a2a]">
-          <span className="w-3 h-3 border border-[#1e1e1e] border-t-[#444] rounded-full"
-            style={{ animation: "spin 1.2s linear infinite" }} />
-          In queue...
+        <div className="flex items-center gap-2.5">
+          <div className="flex-shrink-0 w-3.5 h-3.5 flex items-center justify-center">
+            <span className="w-1 h-1 rounded-full bg-[#333]"
+              style={{ animation: "activePulse 2s ease-in-out infinite" }} />
+          </div>
+          <span className="text-xs text-[#333]">In queue...</span>
         </div>
       )}
 
       <style>{`
-        @keyframes spin        { to{transform:rotate(360deg)} }
+        @keyframes stepIn      { from{opacity:0;transform:translateY(5px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes activePulse { 0%,100%{opacity:0.3;transform:scale(0.8)} 50%{opacity:1;transform:scale(1)} }
         @keyframes blink       { 0%,100%{opacity:1} 50%{opacity:0} }
-        @keyframes fadeIn      { from{opacity:0} to{opacity:1} }
-        @keyframes fadeSlideIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+        @keyframes spin        { to{transform:rotate(360deg)} }
       `}</style>
     </div>
   );
 }
 
-// ─── Step list (expandable inside completed messages) ─────────────────────────
+// ─── Step list (expandable) ───────────────────────────────────────────────────
 function StepList({ log }: { log: TaskRecord["agent_log"] }) {
-  const dot: Record<string,string> = { done: "bg-green-500", error: "bg-red-500", running: "bg-yellow-400" };
+  const dot: Record<string,string> = { done: "bg-green-500/60", error: "bg-red-500", running: "bg-yellow-400" };
   return (
-    <div className="mt-1.5 space-y-1.5 text-[11px] font-mono text-[#444]">
+    <div className="mt-1 space-y-1.5 text-[11px] font-mono text-[#3a3a3a]">
       {log.map((e, i) => (
-        <div key={i} className="flex items-start gap-2">
-          <span className={`mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0 ${dot[e.status] ?? "bg-[#333]"}`} />
+        <div key={i} className="flex items-center gap-2">
+          <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${dot[e.status] ?? "bg-[#2a2a2a]"}`} />
           <span className="truncate">{getDoneLabel(e.step, e.detail)}</span>
         </div>
       ))}
@@ -249,44 +267,41 @@ function ChatMessage({ task }: { task: TaskRecord }) {
     .filter(Boolean);
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
+      {/* User bubble */}
       <div className="flex justify-end">
-        <div className="bg-[#1e1e1e] border border-[#2e2e2e] text-white text-sm rounded-[15px] rounded-tr-[4px] px-4 py-2.5 max-w-[88%] leading-relaxed">
+        <div className="bg-[#1e1e1e] border border-[#2a2a2a] text-white text-sm rounded-[15px] rounded-tr-[4px] px-4 py-2.5 max-w-[88%] leading-relaxed">
           {task.prompt}
         </div>
       </div>
-      <div className="flex gap-2.5">
-        <div className="w-6 h-6 rounded-[8px] bg-[#1a1a1a] border border-[#2a2a2a] flex items-center justify-center flex-shrink-0 mt-0.5 text-[9px] font-bold text-[#444]">
-          AI
-        </div>
-        <div className="flex-1 min-w-0">
-          {isActive && <BuildFeed log={task.agent_log} taskStatus={task.status} />}
-          {(isDone || isError || (!isActive && task.agent_log.length > 0)) && (
-            <div className="bg-[#111] border border-[#1e1e1e] rounded-[15px] rounded-tl-[4px] px-4 py-3 text-sm space-y-2.5">
-              {isDone  && <p className="text-white">Done! Here&apos;s what I&apos;ve built.</p>}
-              {isError && <p className="text-red-400">Build failed.</p>}
-              {task.agent_log.length > 0 && (
-                <button onClick={() => setStepsOpen(!stepsOpen)}
-                  className="flex items-center gap-1.5 text-[11px] text-[#333] hover:text-[#666] transition-colors">
-                  <ChevronIcon open={stepsOpen} /> See steps
-                </button>
-              )}
-              {stepsOpen && <StepList log={task.agent_log} />}
-              {changedFiles.length > 0 && (
-                <div className="pt-2 border-t border-[#1a1a1a]">
-                  <p className="text-[11px] text-[#333] mb-1.5">Updates</p>
-                  <div className="space-y-1">
-                    {changedFiles.slice(0, 6).map(f => (
-                      <div key={f} className="flex items-center gap-1.5 text-[11px] text-[#555]">
-                        <FileIcon /> {f}
-                      </div>
-                    ))}
-                  </div>
+
+      {/* AI response — no avatar */}
+      <div className="pl-1">
+        {isActive && <BuildFeed log={task.agent_log} taskStatus={task.status} />}
+        {(isDone || isError || (!isActive && task.agent_log.length > 0)) && (
+          <div className="text-sm space-y-2">
+            {isDone  && <p className="text-[#777] leading-relaxed">Done! Here&apos;s what I built.</p>}
+            {isError && <p className="text-red-400/70 leading-relaxed">Build failed.</p>}
+            {task.agent_log.length > 0 && (
+              <button onClick={() => setStepsOpen(!stepsOpen)}
+                className="flex items-center gap-1.5 text-[11px] text-[#2e2e2e] hover:text-[#555] transition-colors">
+                <ChevronIcon open={stepsOpen} /> See steps
+              </button>
+            )}
+            {stepsOpen && <StepList log={task.agent_log} />}
+            {changedFiles.length > 0 && isDone && (
+              <div className="pt-1.5">
+                <div className="flex flex-wrap gap-1.5 mt-1">
+                  {changedFiles.slice(0, 8).map(f => (
+                    <span key={f} className="text-[10px] font-mono text-[#444] bg-[#111] border border-[#1e1e1e] rounded-[6px] px-2 py-0.5">
+                      {f}
+                    </span>
+                  ))}
                 </div>
-              )}
-            </div>
-          )}
-        </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -519,6 +534,37 @@ function UrlBar({
   );
 }
 
+// ─── Speech-to-text hook ──────────────────────────────────────────────────────
+function useSpeechToText(onResult: (text: string) => void) {
+  const [listening, setListening] = useState(false);
+  const recogRef = useRef<typeof window.SpeechRecognition extends undefined ? never : InstanceType<typeof window.SpeechRecognition> | null>(null);
+
+  function toggle() {
+    if (listening) {
+      recogRef.current?.stop();
+      return;
+    }
+    const SR = (window as Window & { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown }).SpeechRecognition
+            || (window as Window & { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown }).webkitSpeechRecognition;
+    if (!SR) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const recognition = new (SR as any)();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = "en-US";
+    recognition.onstart  = () => setListening(true);
+    recognition.onend    = () => setListening(false);
+    recognition.onerror  = () => setListening(false);
+    recognition.onresult = (e: { results: { [k: number]: { [k: number]: { transcript: string } } } }) => {
+      onResult(e.results[0][0].transcript);
+    };
+    recogRef.current = recognition;
+    recognition.start();
+  }
+
+  return { listening, toggle };
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 export default function ProjectPage() {
   const router = useRouter();
@@ -543,6 +589,9 @@ export default function ProjectPage() {
   const [sending,      setSending]      = useState(false);
   const [sendError,    setSendError]    = useState("");
   const [powerLoading, setPowerLoading] = useState(false);
+  const { listening, toggle: toggleMic } = useSpeechToText(text =>
+    setPrompt(p => p ? `${p} ${text}` : text)
+  );
 
   const pollRef = useRef<ReturnType<typeof setInterval>|null>(null);
   const chatEnd = useRef<HTMLDivElement>(null);
@@ -648,7 +697,7 @@ export default function ProjectPage() {
 
       {/* ── Left: floating chat sidebar ─────────────────────────────────────── */}
       {chatOpen && (
-      <div className="w-[360px] flex-shrink-0 flex flex-col bg-[#0d0d0d] border border-[#222] rounded-[15px] overflow-hidden">
+      <div className="w-[420px] flex-shrink-0 flex flex-col bg-[#0d0d0d] border border-[#222] rounded-[15px] overflow-hidden">
 
         {/* Header */}
         <div className="flex items-center gap-1.5 px-3 py-3 border-b border-[#1e1e1e]">
@@ -674,13 +723,10 @@ export default function ProjectPage() {
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-3 py-4 space-y-4">
-          <div className="flex gap-2.5">
-            <div className="w-6 h-6 rounded-[8px] bg-[#1a1a1a] border border-[#2a2a2a] flex items-center justify-center flex-shrink-0 text-[9px] font-bold text-[#444]">AI</div>
-            <div className="bg-[#111] border border-[#1e1e1e] text-[#666] text-sm rounded-[15px] rounded-tl-[4px] px-4 py-3 max-w-[90%] leading-relaxed">
-              What can I help you build today?
-            </div>
-          </div>
+        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
+          <p className="text-sm text-[#555] leading-relaxed pl-1">
+            What can I help you build today?
+          </p>
 
           {tasks.map(t => <ChatMessage key={t.id} task={t} />)}
 
@@ -709,10 +755,35 @@ export default function ProjectPage() {
               rows={3}
               className="w-full bg-[#111] border border-[#222] rounded-[15px] px-4 py-3 pr-12 text-sm resize-none focus:outline-none focus:border-[#333] disabled:opacity-40 placeholder-[#2e2e2e] text-white transition-colors"
             />
-            <button type="submit" disabled={sending || isBuilding || !prompt.trim()}
-              className="absolute bottom-3 right-3 w-7 h-7 bg-white hover:bg-gray-200 disabled:opacity-30 rounded-[8px] flex items-center justify-center transition-colors text-black">
-              <SendIcon />
-            </button>
+            {prompt.trim() ? (
+              <button type="submit" disabled={sending || isBuilding}
+                className="absolute bottom-3 right-3 w-7 h-7 bg-white hover:bg-gray-200 disabled:opacity-50 rounded-[8px] flex items-center justify-center transition-colors text-black">
+                <SendIcon />
+              </button>
+            ) : (
+              <button type="button" onClick={toggleMic} disabled={isBuilding}
+                title={listening ? "Stop recording" : "Speak your prompt"}
+                className={`absolute bottom-3 right-3 w-7 h-7 rounded-[8px] flex items-center justify-center transition-all disabled:opacity-30 ${
+                  listening
+                    ? "bg-red-500/20 text-red-400"
+                    : "text-[#444] hover:text-white hover:bg-[#1a1a1a]"
+                }`}>
+                {listening ? (
+                  /* Pulsing recording indicator */
+                  <span className="relative flex items-center justify-center">
+                    <span className="absolute w-5 h-5 rounded-full bg-red-500/20"
+                      style={{ animation: "micPulse 1s ease-out infinite" }} />
+                    <svg className="w-4 h-4 relative" fill="currentColor" viewBox="0 0 24 24">
+                      <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3zM19 10v2a7 7 0 01-14 0v-2H3v2a9 9 0 008 8.94V23h2v-2.06A9 9 0 0021 12v-2h-2z"/>
+                    </svg>
+                  </span>
+                ) : (
+                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3zM19 10v2a7 7 0 01-14 0v-2H3v2a9 9 0 008 8.94V23h2v-2.06A9 9 0 0021 12v-2h-2z"/>
+                  </svg>
+                )}
+              </button>
+            )}
           </form>
         </div>
       </div>
@@ -891,7 +962,10 @@ export default function ProjectPage() {
         </div>
       </div>
 
-      <style>{`@keyframes spin { to { transform:rotate(360deg) } }`}</style>
+      <style>{`
+        @keyframes spin     { to { transform:rotate(360deg) } }
+        @keyframes micPulse { 0%{transform:scale(1);opacity:0.6} 100%{transform:scale(2.2);opacity:0} }
+      `}</style>
     </div>
   );
 }
