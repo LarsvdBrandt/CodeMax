@@ -1,7 +1,12 @@
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { listProjects, type Project } from "@/lib/api";
+import { listProjects, getMe, type Project, type UserProfile } from "@/lib/api";
+
+function initials(u: UserProfile | null) {
+  if (u?.full_name) return u.full_name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
+  return u?.email?.[0].toUpperCase() ?? "?";
+}
 
 const STATUS_DOT: Record<string, string> = {
   idle:     "bg-[#333]",
@@ -19,6 +24,11 @@ interface Props {
 export default function ProjectsSidebar({ open, onClose, currentProjectId }: Props) {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading,  setLoading]  = useState(false);
+  const [user,     setUser]     = useState<UserProfile | null>(null);
+
+  useEffect(() => {
+    getMe().then(setUser).catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -75,6 +85,24 @@ export default function ProjectsSidebar({ open, onClose, currentProjectId }: Pro
               </Link>
             ))
           )}
+        </div>
+
+        {/* User footer */}
+        <div className="border-t border-[#1e1e1e] flex-shrink-0">
+          <Link href="/settings" onClick={onClose}
+            className="flex items-center gap-3 px-4 py-3 hover:bg-[#111] transition-colors group">
+            <div className="w-8 h-8 rounded-full bg-[#1e1e1e] border border-[#2a2a2a] flex items-center justify-center text-xs font-semibold text-white flex-shrink-0 group-hover:border-[#444] transition-colors">
+              {initials(user)}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm text-white truncate">{user?.full_name || user?.email || "..."}</p>
+              {user?.full_name && <p className="text-xs text-[#333] truncate">{user.email}</p>}
+            </div>
+            <svg className="w-3.5 h-3.5 text-[#333] group-hover:text-[#666] transition-colors flex-shrink-0"
+              fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </Link>
         </div>
       </div>
     </>

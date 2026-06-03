@@ -30,9 +30,30 @@ class User(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    company_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    company_address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    company_city: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    company_country: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    website: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    bio: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     projects: Mapped[list["Project"]] = relationship("Project", back_populates="user", cascade="all, delete-orphan")
+    api_keys: Mapped[list["UserApiKey"]] = relationship("UserApiKey", back_populates="user", cascade="all, delete-orphan")
+
+
+class UserApiKey(Base):
+    __tablename__ = "user_api_keys"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    service: Mapped[str] = mapped_column(String(100), nullable=False, default="custom")
+    key_value: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    user: Mapped["User"] = relationship("User", back_populates="api_keys")
 
 
 class Project(Base):

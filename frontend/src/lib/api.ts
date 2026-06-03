@@ -152,6 +152,43 @@ export async function deleteProject(projectId: string): Promise<void> {
   return request(`/projects/${projectId}`, { method: "DELETE" });
 }
 
+// ─── User / settings ─────────────────────────────────────────────────────────
+
+export interface UserProfile {
+  id: string; email: string; full_name: string | null;
+  company_name: string | null; company_address: string | null;
+  company_city: string | null; company_country: string | null;
+  website: string | null; bio: string | null; created_at: string;
+}
+
+export interface ApiKey {
+  id: string; name: string; service: string; key_preview: string; created_at: string;
+}
+
+export async function getMe(): Promise<UserProfile> {
+  return request("/auth/me");
+}
+
+export async function updateMe(data: Partial<Omit<UserProfile, "id"|"email"|"created_at">>): Promise<UserProfile> {
+  return request("/auth/me", { method: "PUT", body: JSON.stringify(data) });
+}
+
+export async function changePassword(current_password: string, new_password: string): Promise<void> {
+  return request("/auth/me/password", { method: "POST", body: JSON.stringify({ current_password, new_password }) });
+}
+
+export async function listApiKeys(): Promise<ApiKey[]> {
+  return request("/auth/api-keys");
+}
+
+export async function createApiKey(name: string, service: string, key_value: string): Promise<ApiKey> {
+  return request("/auth/api-keys", { method: "POST", body: JSON.stringify({ name, service, key_value }) });
+}
+
+export async function deleteApiKey(id: string): Promise<void> {
+  return request(`/auth/api-keys/${id}`, { method: "DELETE" });
+}
+
 export async function generatePlan(description: string): Promise<{ plan: string }> {
   return request("/projects/planning", {
     method: "POST",
