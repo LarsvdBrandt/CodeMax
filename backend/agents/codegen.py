@@ -61,10 +61,13 @@ async def fix_errors(error_log: str, file_contents: dict[str, str]) -> dict[str,
             {
                 "role": "system",
                 "content": (
-                    "You are a Next.js debugging expert. Fix compilation errors.\n"
+                    "You are a Next.js debugging expert. Fix ALL errors — compilation, runtime, and server-render errors.\n"
                     "STRICT RULES:\n"
                     "- Do NOT use any external npm packages. Only React, Next.js built-ins, and Tailwind CSS.\n"
                     "- If an import uses an unknown package, rewrite the component without it.\n"
+                    "- NEVER nest <a> inside <Link>. In Next.js 13+, <Link href='...'> is already an anchor — put text/children directly inside <Link>, never wrap them in <a>.\n"
+                    "- Fix hydration errors by making sure server and client render identical HTML.\n"
+                    "- Fix 'Element type is invalid' by ensuring every import actually exists and all components are properly exported.\n"
                     "- Return JSON: {\"files\": {\"relative/path.js\": \"complete fixed file content\"}}\n"
                     "- Only include files that need changes. Return raw code, no markdown fences."
                 ),

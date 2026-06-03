@@ -12,6 +12,7 @@ from agents.retriever import retrieve_context
 from agents.planner import plan
 from agents.codegen import generate_file, generate_architecture_summary, fix_errors
 from agents.builder import provision_preview, seed_template, get_container_errors
+from agents.api_keys import scan_project_for_keys, write_env_local, ENV_VAR_MAP
 
 PROJECTS_DIR = os.environ.get("PROJECTS_DIR", "/projects")
 
@@ -178,6 +179,52 @@ async def run_pipeline(task_id: str, project_id: str, prompt: str, db: AsyncSess
             ))
         await db.commit()
 
+        # Step 7b — Check for required API keys
+        required_keys = scan_project_for_keys(project_dir)
+        if required_keys:
+            # Fetch keys the user has stored
+            from models import UserApiKey
+            stored_result = await db.execute(
+                select(UserApiKey).where(UserApiKey.user_id == project.user_id)
+            )
+            stored = {k.name.upper().replace(" ", "_"): k.key_value
+                      for k in stored_result.scalars().all()}
+            # Also match by the env var name directly
+            stored_by_var = {k.key_value: None for k in stored_result.scalars().all()}
+            stored_result2 = await db.execute(
+                select(UserApiKey).where(UserApiKey.user_id == project.user_id)
+            )
+            stored_map: dict[str, str] = {}
+            for k in stored_result2.scalars().all():
+                # Match stored key by service name or by treating name as env var
+                for env_var, (service, _) in ENV_VAR_MAP.items():
+                    if k.service.lower() == service.lower() or k.name.upper() == env_var:
+                        stored_map[env_var] = k.key_value
+
+            # Which required keys do we have?
+            key_values: dict[str, str] = {}
+            missing: list[str] = []
+            for env_var in required_keys:
+                if env_var in stored_map:
+                    key_values[env_var] = stored_map[env_var]
+                else:
+                    missing.append(env_var)
+
+            # Write any found keys to .env.local immediately
+            if key_values:
+                write_env_local(project_dir, key_values)
+
+            # If there's a missing key, pause the task and wait for the user
+            if missing:
+                first_missing = missing[0]
+                service, description = ENV_VAR_MAP.get(first_missing, (first_missing, "API key"))
+                log = _log_step(log, "need_api_key", "waiting",
+                                f"{first_missing}|{service}|{description}")
+                task.status = TaskStatus.waiting_for_key
+                await _save_log(db, task, log)
+                await db.commit()
+                return  # Pause — resume via /provide_key endpoint
+
         # Step 8 — Build and provision preview
         log = _log_step(log, "build", "running", "Starting preview container")
         await _save_log(db, task, log)
@@ -201,15 +248,16 @@ async def run_pipeline(task_id: str, project_id: str, prompt: str, db: AsyncSess
         log = _log_step(log, "build", "done", f"Container ready on port {port}")
         await _save_log(db, task, log)
 
-        # Step 9 — Auto-fix compilation errors (up to 3 rounds)
-        for fix_attempt in range(3):
+        # Step 9 — Auto-fix compilation + runtime errors (up to 5 rounds)
+        MAX_FIX_ROUNDS = 5
+        for fix_attempt in range(MAX_FIX_ROUNDS):
             error_log_text = get_container_errors(project_id)
             if not error_log_text:
                 break
 
             log = _log_step(
                 log, f"autofix_{fix_attempt}", "running",
-                f"Compilation error detected, fixing (attempt {fix_attempt + 1}/3)..."
+                f"Error detected, auto-fixing (attempt {fix_attempt + 1}/{MAX_FIX_ROUNDS})...",
             )
             await _save_log(db, task, log)
 
@@ -224,6 +272,12 @@ async def run_pipeline(task_id: str, project_id: str, prompt: str, db: AsyncSess
             }
 
             fixed = await fix_errors(error_log_text, file_contents)
+
+            if not fixed:
+                # GPT couldn't figure out what to fix — stop trying
+                log = _log_step(log, f"autofix_{fix_attempt}", "done", "No files returned by fixer")
+                await _save_log(db, task, log)
+                break
 
             for file_path, content in fixed.items():
                 dest = project_dir / file_path
@@ -251,9 +305,10 @@ async def run_pipeline(task_id: str, project_id: str, prompt: str, db: AsyncSess
             await db.commit()
             log = _log_step(
                 log, f"autofix_{fix_attempt}", "done",
-                f"Rewrote {len(fixed)} file(s)"
+                f"Rewrote {len(fixed)} file(s); waiting for hot-reload...",
             )
             await _save_log(db, task, log)
+            # get_container_errors waits 15s on next iteration — enough for Next.js hot-reload
 
         project.status = ProjectStatus.ready
         project.updated_at = _now()

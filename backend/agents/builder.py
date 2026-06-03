@@ -103,12 +103,24 @@ def _wait_for_http(project_id: str, timeout: int = 120) -> bool:
 
 
 ERROR_INDICATORS = [
+    # Compile-time
     "Module not found",
     "Failed to compile",
     "SyntaxError",
     "Cannot find module",
+    # Runtime / Next.js server errors
     "ReferenceError",
     "TypeError:",
+    "RangeError:",
+    "Invalid <Link>",
+    "⨯ Error:",
+    "⨯ TypeError",
+    "⨯ ReferenceError",
+    "Unhandled Runtime Error",
+    " 500 in ",
+    "Error: Element type is invalid",
+    "Error: Hydration failed",
+    "Error: Text content does not match",
 ]
 
 
@@ -142,17 +154,35 @@ def get_container_logs(project_id: str, tail: int = 150) -> list[str]:
         return []
 
 
-def get_container_errors(project_id: str, wait_seconds: int = 6) -> str | None:
-    """Wait for Next.js to (re)compile, then return error log if any errors found."""
+def get_container_errors(project_id: str, wait_seconds: int = 15) -> str | None:
+    """Wait for Next.js to (re)compile, then return error log if any errors found.
+
+    Also does a live HTTP probe — a 500 response always counts as an error even
+    when the compile-error indicators are absent from the log tail.
+    """
     time.sleep(wait_seconds)
     dc = _docker_client()
+    logs = ""
     try:
         container = dc.containers.get(f"codemax_preview_{project_id}")
-        logs = container.logs(tail=200).decode(errors="replace")
-        if any(indicator in logs for indicator in ERROR_INDICATORS):
-            return logs
+        logs = container.logs(tail=300).decode(errors="replace")
     except Exception:
         pass
+
+    has_log_error = any(indicator in logs for indicator in ERROR_INDICATORS)
+
+    # HTTP probe: request / and check for 500
+    container_name = f"codemax_preview_{project_id}"
+    http_error_body = ""
+    try:
+        r = httpx.get(f"http://{container_name}:3001", timeout=5, follow_redirects=True)
+        if r.status_code >= 500:
+            http_error_body = f"HTTP {r.status_code} from /\n" + r.text[:2000]
+    except Exception:
+        pass
+
+    if has_log_error or http_error_body:
+        return (logs[-4000:] + "\n" + http_error_body).strip()
     return None
 
 

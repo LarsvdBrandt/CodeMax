@@ -22,6 +22,7 @@ class TaskStatus(str, enum.Enum):
     running = "running"
     done = "done"
     error = "error"
+    waiting_for_key = "waiting_for_key"
 
 
 class User(Base):

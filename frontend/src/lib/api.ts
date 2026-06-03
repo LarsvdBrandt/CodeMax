@@ -189,6 +189,39 @@ export async function deleteApiKey(id: string): Promise<void> {
   return request(`/auth/api-keys/${id}`, { method: "DELETE" });
 }
 
+export interface ClarifyResult {
+  needs_clarification: boolean;
+  question?: string;
+  suggestions?: string[];
+}
+
+export interface MissingKey {
+  env_var: string;
+  service: string;
+  description: string;
+}
+
+export async function detectKeys(projectId: string, prompt: string): Promise<{ missing: MissingKey[] }> {
+  return request(`/projects/${projectId}/detect_keys`, {
+    method: "POST",
+    body: JSON.stringify({ prompt }),
+  });
+}
+
+export async function provideApiKey(projectId: string, env_var: string, key_value: string, service: string): Promise<void> {
+  return request(`/projects/${projectId}/provide_key`, {
+    method: "POST",
+    body: JSON.stringify({ env_var, key_value, service }),
+  });
+}
+
+export async function clarifyPrompt(projectId: string, prompt: string, context?: string): Promise<ClarifyResult> {
+  return request(`/projects/${projectId}/clarify`, {
+    method: "POST",
+    body: JSON.stringify({ prompt, context }),
+  });
+}
+
 export async function generatePlan(description: string): Promise<{ plan: string }> {
   return request("/projects/planning", {
     method: "POST",

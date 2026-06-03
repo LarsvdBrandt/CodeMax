@@ -378,6 +378,143 @@ async def list_tasks(
     return result.scalars().all()
 
 
+class ProvideKeyRequest(BaseModel):
+    env_var: str
+    key_value: str
+    service: str = "custom"
+
+
+@router.post("/{project_id}/provide_key")
+async def provide_api_key(
+    project_id: uuid.UUID,
+    body: ProvideKeyRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Save a missing API key and resume the paused build."""
+    import asyncio
+    from pathlib import Path
+    from agents.api_keys import write_env_local
+    from agents.builder import provision_preview, get_container_errors
+    from agents.codegen import fix_errors
+    from models import UserApiKey, ProjectFile
+
+    # Verify project ownership
+    proj_result = await db.execute(
+        select(Project).where(Project.id == project_id, Project.user_id == current_user.id)
+    )
+    project = proj_result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Find the paused task
+    task_result = await db.execute(
+        select(Task).where(Task.project_id == project_id, Task.status == TaskStatus.waiting_for_key)
+        .order_by(Task.created_at.desc()).limit(1)
+    )
+    task = task_result.scalar_one_or_none()
+    if not task:
+        raise HTTPException(status_code=404, detail="No paused task found")
+
+    # 1. Save key to user_api_keys
+    # Check if already exists for this service
+    existing_key = await db.execute(
+        select(UserApiKey).where(
+            UserApiKey.user_id == current_user.id,
+            UserApiKey.service == body.service,
+        )
+    )
+    if existing_key.scalar_one_or_none():
+        # Update existing
+        upd = existing_key.scalar_one_or_none()
+    else:
+        upd = UserApiKey(
+            id=uuid.uuid4(),
+            user_id=current_user.id,
+            name=body.env_var,
+            service=body.service,
+            key_value=body.key_value,
+        )
+        db.add(upd)
+
+    # 2. Write .env.local
+    projects_dir = os.environ.get("PROJECTS_DIR", "/projects")
+    project_dir = Path(projects_dir) / str(project_id)
+    write_env_local(project_dir, {body.env_var: body.key_value})
+
+    # 3. Resume build in background
+    project.status = ProjectStatus.building
+    task.status = TaskStatus.running
+    agent_log = list(task.agent_log)
+    agent_log.append({
+        "step": "api_key_provided",
+        "status": "done",
+        "timestamp": datetime.utcnow().isoformat(),
+        "detail": f"{body.env_var} saved, resuming build...",
+    })
+    task.agent_log = agent_log
+    task.updated_at = datetime.utcnow()
+    await db.commit()
+
+    # Re-queue the build phase
+    from queue_client import publish_job
+    resume_task = Task(
+        id=uuid.uuid4(),
+        project_id=project_id,
+        prompt=task.prompt,
+        status=TaskStatus.queued,
+        agent_log=[],
+    )
+    db.add(resume_task)
+    await db.commit()
+    await publish_job(resume_task.id, project_id, task.prompt)
+
+    return {"ok": True, "resumed": True}
+
+
+class DetectKeysRequest(BaseModel):
+    prompt: str
+
+
+@router.post("/{project_id}/detect_keys")
+async def detect_keys(
+    project_id: uuid.UUID,
+    body: DetectKeysRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Analyse a prompt with GPT-4o and return which API keys are missing from the user's stored keys."""
+    from agents.api_keys import detect_required_services, ENV_VAR_MAP
+    from models import UserApiKey
+
+    proj = await db.execute(
+        select(Project).where(Project.id == project_id, Project.user_id == current_user.id)
+    )
+    if not proj.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    required = await detect_required_services(body.prompt)
+    if not required:
+        return {"missing": []}
+
+    # Build map of what the user already has stored
+    stored_result = await db.execute(
+        select(UserApiKey).where(UserApiKey.user_id == current_user.id)
+    )
+    stored_map: dict[str, str] = {}
+    for k in stored_result.scalars().all():
+        for env_var, (service, _) in ENV_VAR_MAP.items():
+            if k.service.lower() == service.lower() or k.name.upper() == env_var:
+                stored_map[env_var] = k.key_value
+
+    missing = [
+        {"env_var": env_var, "service": service, "description": desc}
+        for env_var, service, desc in required
+        if env_var not in stored_map
+    ]
+    return {"missing": missing}
+
+
 @router.delete("/{project_id}")
 async def delete_project(
     project_id: uuid.UUID,
@@ -398,6 +535,56 @@ async def delete_project(
 
 class PlanRequest(BaseModel):
     description: str
+
+
+class ClarifyRequest(BaseModel):
+    prompt: str
+    context: Optional[str] = None
+
+
+@router.post("/{project_id}/clarify")
+async def clarify_prompt(
+    project_id: uuid.UUID,
+    body: ClarifyRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from openai import AsyncOpenAI
+    import os, json as _json
+
+    proj = await db.execute(
+        select(Project).where(Project.id == project_id, Project.user_id == current_user.id)
+    )
+    if not proj.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    client = AsyncOpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+    content = f"Prompt: {body.prompt}"
+    if body.context:
+        content += f"\n\nContext from previous clarification: {body.context}"
+
+    resp = await client.chat.completions.create(
+        model="gpt-4o",
+        response_format={"type": "json_object"},
+        temperature=0.3,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You help clarify web app build requests. Decide if you need one quick clarifying question "
+                    "to produce a better result. Ask about: color scheme, specific text/branding, key feature "
+                    "details, or target audience — but only when the answer would meaningfully change what gets built.\n\n"
+                    "Respond ONLY with valid JSON:\n"
+                    '{"needs_clarification": false}\n'
+                    "OR\n"
+                    '{"needs_clarification": true, "question": "...", "suggestions": ["short option 1", "short option 2", "short option 3"]}\n\n'
+                    "Keep the question under 12 words. Keep each suggestion under 5 words. Cover clearly different directions."
+                ),
+            },
+            {"role": "user", "content": content},
+        ],
+    )
+    return _json.loads(resp.choices[0].message.content)
 
 
 @router.post("/planning", response_model=dict)

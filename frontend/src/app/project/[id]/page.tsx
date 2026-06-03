@@ -4,8 +4,9 @@ import { useRouter, useParams } from "next/navigation";
 import Link from "next/link";
 import {
   getProject, getProjectStatus, listFiles, listTasks, sendPrompt, retryProject,
-  stopPreview, startPreview, getPreviewLogs, ApiError,
-  type Project, type ProjectFile, type ProjectStatus, type TaskRecord,
+  stopPreview, startPreview, getPreviewLogs, clarifyPrompt, provideApiKey,
+  detectKeys, createApiKey, ApiError,
+  type Project, type ProjectFile, type ProjectStatus, type TaskRecord, type MissingKey,
 } from "@/lib/api";
 import FileExplorer from "@/components/FileExplorer";
 import CodeEditor from "@/components/CodeEditor";
@@ -254,12 +255,163 @@ function StepList({ log }: { log: TaskRecord["agent_log"] }) {
   );
 }
 
+// ─── API key card (shown when task is waiting_for_key) ────────────────────────
+function ApiKeyCard({ task, projectId, onProvided }: {
+  task: TaskRecord;
+  projectId: string;
+  onProvided: () => void;
+}) {
+  const needsKeyEntry = task.agent_log.find(e => e.step === "need_api_key");
+  const [envVar, service, description] = (needsKeyEntry?.detail ?? "||").split("|");
+  const [keyValue, setKeyValue] = useState("");
+  const [saving,   setSaving]   = useState(false);
+  const [error,    setError]    = useState("");
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    if (!keyValue.trim()) return;
+    setSaving(true); setError("");
+    try {
+      await provideApiKey(projectId, envVar, keyValue.trim(), service);
+      onProvided();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save key");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="rounded-[15px] border border-[#2a2a2a] bg-[#0d0d0d] overflow-hidden">
+      <div className="px-4 py-3 border-b border-[#1e1e1e] flex items-center gap-2.5">
+        <div className="w-6 h-6 rounded-[8px] bg-yellow-500/10 border border-yellow-500/20 flex items-center justify-center flex-shrink-0">
+          <svg className="w-3.5 h-3.5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+          </svg>
+        </div>
+        <div>
+          <p className="text-sm text-white font-medium">{service} API key required</p>
+          <p className="text-[11px] text-[#444]">{description}</p>
+        </div>
+      </div>
+      <form onSubmit={handleSave} className="px-4 py-3 space-y-3">
+        <p className="text-xs text-[#555]">
+          This app uses <span className="font-mono text-[#666]">{envVar}</span>. Provide your key below — it will be saved to your API keys and used automatically in future builds.
+        </p>
+        <input
+          type="password"
+          value={keyValue}
+          onChange={e => setKeyValue(e.target.value)}
+          placeholder={`Paste your ${service} key...`}
+          className="w-full bg-[#111] border border-[#222] rounded-[10px] px-3 py-2 text-xs font-mono text-white placeholder-[#2a2a2a] focus:outline-none focus:border-[#333] transition-colors"
+        />
+        {error && <p className="text-red-400 text-xs">{error}</p>}
+        <div className="flex items-center gap-2">
+          <button type="submit" disabled={!keyValue.trim() || saving}
+            className="bg-white hover:bg-gray-100 disabled:opacity-40 text-black text-xs font-medium px-4 py-2 rounded-[8px] transition-colors">
+            {saving ? "Saving..." : "Save & continue build"}
+          </button>
+          <a href="/settings/api-keys" target="_blank"
+            className="text-xs text-[#333] hover:text-[#666] transition-colors">
+            Manage API keys →
+          </a>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// ─── Pre-build key card (shown before build starts, saves key to user settings) ─
+function PreBuildKeyCard({ envVar, service, description, provided, onProvided }: {
+  envVar: string;
+  service: string;
+  description: string;
+  provided: boolean;
+  onProvided: (envVar: string) => void;
+}) {
+  const [keyValue, setKeyValue] = useState("");
+  const [saving,   setSaving]   = useState(false);
+  const [error,    setError]    = useState("");
+
+  if (provided) {
+    return (
+      <div className="flex items-center gap-2.5 px-4 py-3 rounded-[15px] border border-green-900/40 bg-green-950/20">
+        <svg className="w-3.5 h-3.5 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+        </svg>
+        <span className="text-sm text-green-400">{service} key saved</span>
+      </div>
+    );
+  }
+
+  async function handleSave(e: React.FormEvent) {
+    e.preventDefault();
+    if (!keyValue.trim()) return;
+    setSaving(true); setError("");
+    try {
+      await createApiKey(envVar, service, keyValue.trim());
+      onProvided(envVar);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save key");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="rounded-[15px] border border-[#2a2a2a] bg-[#0d0d0d] overflow-hidden">
+      <div className="px-4 py-3 border-b border-[#1e1e1e] flex items-center gap-2.5">
+        <div className="w-6 h-6 rounded-[8px] bg-yellow-500/10 border border-yellow-500/20 flex items-center justify-center flex-shrink-0">
+          <svg className="w-3.5 h-3.5 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+          </svg>
+        </div>
+        <div>
+          <p className="text-sm text-white font-medium">{service} API key required</p>
+          <p className="text-[11px] text-[#444]">{description}</p>
+        </div>
+      </div>
+      <form onSubmit={handleSave} className="px-4 py-3 space-y-3">
+        <p className="text-xs text-[#555]">
+          This app needs <span className="font-mono text-[#666]">{envVar}</span>. Your key will be saved to your API keys and reused automatically in future builds.
+        </p>
+        <input
+          type="password"
+          value={keyValue}
+          onChange={e => setKeyValue(e.target.value)}
+          placeholder={`Paste your ${service} key...`}
+          autoFocus
+          className="w-full bg-[#111] border border-[#222] rounded-[10px] px-3 py-2 text-xs font-mono text-white placeholder-[#2a2a2a] focus:outline-none focus:border-[#333] transition-colors"
+        />
+        {error && <p className="text-red-400 text-xs">{error}</p>}
+        <div className="flex items-center gap-2">
+          <button type="submit" disabled={!keyValue.trim() || saving}
+            className="bg-white hover:bg-gray-100 disabled:opacity-40 text-black text-xs font-medium px-4 py-2 rounded-[8px] transition-colors">
+            {saving ? "Saving..." : "Save key"}
+          </button>
+          <a href="/settings/api-keys" target="_blank"
+            className="text-xs text-[#333] hover:text-[#666] transition-colors">
+            Manage API keys →
+          </a>
+        </div>
+      </form>
+    </div>
+  );
+}
+
 // ─── Chat message ─────────────────────────────────────────────────────────────
-function ChatMessage({ task }: { task: TaskRecord }) {
+function ChatMessage({ task, projectId, onKeyProvided }: {
+  task: TaskRecord;
+  projectId: string;
+  onKeyProvided: () => void;
+}) {
   const [stepsOpen, setStepsOpen] = useState(false);
-  const isActive = task.status === "running" || task.status === "queued";
-  const isDone   = task.status === "done";
-  const isError  = task.status === "error";
+  const isActive      = task.status === "running" || task.status === "queued";
+  const isDone        = task.status === "done";
+  const isError       = task.status === "error";
+  const isWaitingKey  = task.status === "waiting_for_key";
 
   const changedFiles = task.agent_log
     .filter(e => e.step.startsWith("codegen_") && e.status === "done")
@@ -278,7 +430,13 @@ function ChatMessage({ task }: { task: TaskRecord }) {
       {/* AI response — no avatar */}
       <div className="pl-1">
         {isActive && <BuildFeed log={task.agent_log} taskStatus={task.status} />}
-        {(isDone || isError || (!isActive && task.agent_log.length > 0)) && (
+
+        {/* Waiting for API key */}
+        {isWaitingKey && (
+          <ApiKeyCard task={task} projectId={projectId} onProvided={onKeyProvided} />
+        )}
+
+        {(isDone || isError || (!isActive && !isWaitingKey && task.agent_log.length > 0)) && (
           <div className="text-sm space-y-2">
             {isDone  && <p className="text-[#777] leading-relaxed">Done! Here&apos;s what I built.</p>}
             {isError && <p className="text-red-400/70 leading-relaxed">Build failed.</p>}
@@ -611,6 +769,22 @@ export default function ProjectPage() {
     setPrompt(p => p ? `${p} ${text}` : text)
   );
 
+  // Clarification state
+  interface Clarification {
+    basePrompt: string;       // original user prompt
+    context: string;          // accumulated Q&A context
+    question: string;
+    suggestions: string[];
+    round: number;            // 1 or 2, max 2 rounds
+  }
+  const [clarification,    setClarification]    = useState<Clarification | null>(null);
+  const [clarifying,       setClarifying]       = useState(false);
+  // Pre-build local chat messages (shown above tasks)
+  const [localMessages,    setLocalMessages]    = useState<{ role: "user"|"ai"; text: string }[]>([]);
+  // Pre-build API key collection
+  const [pendingBuild,     setPendingBuild]     = useState<{ prompt: string; remainingKeys: string[] } | null>(null);
+  const [keyCollectionKeys, setKeyCollectionKeys] = useState<(MissingKey & { provided: boolean })[]>([]);
+
   const pollRef = useRef<ReturnType<typeof setInterval>|null>(null);
   const chatEnd = useRef<HTMLDivElement>(null);
 
@@ -646,16 +820,139 @@ export default function ProjectPage() {
     setActivePanel(p => p === panel ? null : panel);
   }
 
-  async function handleSend(e: React.FormEvent) {
-    e.preventDefault();
-    if (!prompt.trim() || sending) return;
-    setSendError(""); setSending(true);
+  async function executeBuild(finalPrompt: string) {
+    setSending(true); setSendError("");
     try {
-      await sendPrompt(id, prompt); setPrompt("");
+      await sendPrompt(id, finalPrompt);
       setStatusData(s => s ? { ...s, status: "building" } : s);
       setTimeout(fetchStatus, 500);
     } catch (err) { setSendError(err instanceof Error ? err.message : "Failed"); }
     finally { setSending(false); }
+  }
+
+  async function startBuildWithKeyCheck(finalPrompt: string) {
+    setClarification(null);
+    setClarifying(true);
+    try {
+      const { missing } = await detectKeys(id, finalPrompt);
+      if (missing.length === 0) {
+        setLocalMessages([]);
+        await executeBuild(finalPrompt);
+        return;
+      }
+      // Pause before building — collect missing keys
+      setPendingBuild({ prompt: finalPrompt, remainingKeys: missing.map(k => k.env_var) });
+      setKeyCollectionKeys(missing.map(k => ({ ...k, provided: false })));
+      const services = missing.map(k => k.service).join(", ");
+      setLocalMessages(m => [
+        ...m,
+        { role: "ai", text: `Before I start building, I need ${missing.length === 1 ? "an API key" : "some API keys"} (${services}). Please provide ${missing.length === 1 ? "it" : "them"} below:` },
+      ]);
+    } catch {
+      // Detection failed — build anyway
+      setLocalMessages([]);
+      await executeBuild(finalPrompt);
+    } finally {
+      setClarifying(false);
+    }
+  }
+
+  function handleKeyProvided(envVar: string) {
+    setKeyCollectionKeys(prev => prev.map(k => k.env_var === envVar ? { ...k, provided: true } : k));
+    if (!pendingBuild) return;
+    const remaining = pendingBuild.remainingKeys.filter(v => v !== envVar);
+    if (remaining.length === 0) {
+      const prompt = pendingBuild.prompt;
+      setPendingBuild(null);
+      setKeyCollectionKeys([]);
+      setLocalMessages([]);
+      executeBuild(prompt);
+    } else {
+      setPendingBuild(prev => prev ? { ...prev, remainingKeys: remaining } : null);
+    }
+  }
+
+  async function handleSend(e: React.FormEvent) {
+    e.preventDefault();
+    if (!prompt.trim() || sending || clarifying) return;
+    if (pendingBuild) return; // collecting keys — don't accept new prompts
+    const text = prompt.trim();
+    setPrompt("");
+
+    // If we're mid-clarification: user typed a free-form answer
+    if (clarification) {
+      await handleClarificationAnswer(text);
+      return;
+    }
+
+    // New prompt — show user message locally and ask for clarification
+    setLocalMessages([{ role: "user", text }]);
+    setSendError("");
+    setClarifying(true);
+    try {
+      const result = await clarifyPrompt(id, text);
+      if (result.needs_clarification && result.question) {
+        setClarification({
+          basePrompt: text, context: "", question: result.question,
+          suggestions: result.suggestions ?? [], round: 1,
+        });
+        setLocalMessages(m => [...m, { role: "ai", text: result.question! }]);
+      } else {
+        // No clarification needed — check keys then build
+        await startBuildWithKeyCheck(text);
+      }
+    } catch {
+      // Clarify failed — build anyway
+      setLocalMessages([]);
+      await executeBuild(text);
+    } finally {
+      setClarifying(false);
+    }
+  }
+
+  async function handleClarificationAnswer(answer: string) {
+    if (!clarification) return;
+    const newContext = clarification.context
+      ? `${clarification.context}\nQ: ${clarification.question}\nA: ${answer}`
+      : `Q: ${clarification.question}\nA: ${answer}`;
+    const enrichedPrompt = `${clarification.basePrompt}\n\n${newContext}`;
+
+    setLocalMessages(m => [...m, { role: "user", text: answer }]);
+
+    // Max 2 clarification rounds
+    if (clarification.round >= 2) {
+      await startBuildWithKeyCheck(enrichedPrompt);
+      return;
+    }
+
+    // Ask one more clarifying question
+    setClarifying(true);
+    try {
+      const result = await clarifyPrompt(id, clarification.basePrompt, newContext);
+      if (result.needs_clarification && result.question) {
+        setClarification({
+          ...clarification, context: newContext,
+          question: result.question,
+          suggestions: result.suggestions ?? [],
+          round: clarification.round + 1,
+        });
+        setLocalMessages(m => [...m, { role: "ai", text: result.question! }]);
+      } else {
+        await startBuildWithKeyCheck(enrichedPrompt);
+      }
+    } catch {
+      setClarification(null);
+      setLocalMessages([]);
+      await executeBuild(enrichedPrompt);
+    } finally {
+      setClarifying(false);
+    }
+  }
+
+  async function handleSuggestion(suggestion: string) {
+    if (!clarification) return;
+    setPrompt("");
+    await handleClarificationAnswer(suggestion);
   }
 
   async function handlePower() {
@@ -746,7 +1043,54 @@ export default function ProjectPage() {
             What can I help you build today?
           </p>
 
-          {tasks.map(t => <ChatMessage key={t.id} task={t} />)}
+          {tasks.map(t => (
+            <ChatMessage key={t.id} task={t} projectId={id}
+              onKeyProvided={() => {
+                setStatusData(s => s ? { ...s, status: "building" } : s);
+                setTimeout(fetchStatus, 1000);
+              }} />
+          ))}
+
+          {/* Pre-build clarification messages */}
+          {localMessages.map((m, i) => (
+            <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
+              {m.role === "user" ? (
+                <div className="bg-[#1e1e1e] border border-[#2a2a2a] text-white text-sm rounded-[15px] rounded-tr-[4px] px-4 py-2.5 max-w-[88%] leading-relaxed">
+                  {m.text}
+                </div>
+              ) : (
+                <p className="text-sm text-[#888] leading-relaxed pl-1 max-w-[90%]">{m.text}</p>
+              )}
+            </div>
+          ))}
+
+          {/* Pre-build API key collection cards */}
+          {keyCollectionKeys.length > 0 && (
+            <div className="space-y-2 pl-1">
+              {keyCollectionKeys.map(k => (
+                <PreBuildKeyCard
+                  key={k.env_var}
+                  envVar={k.env_var}
+                  service={k.service}
+                  description={k.description}
+                  provided={k.provided}
+                  onProvided={handleKeyProvided}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* Thinking indicator during clarification / key-detection */}
+          {clarifying && (
+            <div className="flex justify-start pl-1">
+              <div className="flex gap-1 items-center py-1">
+                {[0,1,2].map(i => (
+                  <span key={i} className="w-1.5 h-1.5 rounded-full bg-[#2a2a2a]"
+                    style={{ animation: `typingBounce 1.2s ease-in-out ${i*0.2}s infinite` }} />
+                ))}
+              </div>
+            </div>
+          )}
 
           {statusData?.status === "error" && (
             <div className="flex justify-center">
@@ -762,14 +1106,28 @@ export default function ProjectPage() {
 
         {/* Input */}
         <div className="border-t border-[#1e1e1e] p-3">
+
+          {/* Suggestion buttons — shown during clarification */}
+          {clarification && (
+            <div className="mb-3 space-y-1.5">
+              {clarification.suggestions.map((s, i) => (
+                <button key={i} type="button" onClick={() => handleSuggestion(s)}
+                  disabled={clarifying || sending}
+                  className="w-full text-left text-xs text-[#888] hover:text-white bg-[#111] hover:bg-[#1a1a1a] border border-[#1e1e1e] hover:border-[#333] px-3 py-2.5 rounded-[10px] transition-all disabled:opacity-40 leading-relaxed">
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
+
           {sendError && <p className="text-red-400 text-xs mb-2">{sendError}</p>}
           <form onSubmit={handleSend} className="relative">
             <textarea
               value={prompt}
               onChange={e => setPrompt(e.target.value)}
               onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(e); } }}
-              disabled={sending || isBuilding}
-              placeholder="Make updates to your project"
+              disabled={sending || isBuilding || clarifying || !!pendingBuild}
+              placeholder={pendingBuild ? "Provide the API keys above to continue..." : clarification ? "Or type your answer..." : "Make updates to your project"}
               rows={3}
               className="w-full bg-[#111] border border-[#222] rounded-[15px] px-4 py-3 pr-12 text-sm resize-none focus:outline-none focus:border-[#333] disabled:opacity-40 placeholder-[#2e2e2e] text-white transition-colors"
             />
@@ -980,8 +1338,9 @@ export default function ProjectPage() {
       </div>
 
       <style>{`
-        @keyframes spin     { to { transform:rotate(360deg) } }
-        @keyframes micPulse { 0%{transform:scale(1);opacity:0.6} 100%{transform:scale(2.2);opacity:0} }
+        @keyframes spin          { to { transform:rotate(360deg) } }
+        @keyframes micPulse      { 0%{transform:scale(1);opacity:0.6} 100%{transform:scale(2.2);opacity:0} }
+        @keyframes typingBounce  { 0%,100%{transform:translateY(0);opacity:0.3} 50%{transform:translateY(-4px);opacity:1} }
       `}</style>
     </div>
   );
