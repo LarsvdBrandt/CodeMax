@@ -109,6 +109,11 @@ ERROR_INDICATORS = [
     "Failed to compile",
     "SyntaxError",
     "Cannot find module",
+    # TypeScript syntax in .js files (swc parser errors)
+    "Expected ',', got ':'",
+    "Expected expression",
+    "x Expected",
+    "Unexpected token",
     # Tailwind / PostCSS
     "class does not exist",
     "does not exist. If",

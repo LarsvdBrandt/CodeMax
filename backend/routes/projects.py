@@ -554,9 +554,16 @@ async def delete_project(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    # Remove Docker container (fire-and-forget, don't fail if missing)
+    # Remove preview container (fire-and-forget)
     try:
         remove_container(str(project_id))
+    except Exception:
+        pass
+
+    # Remove database container (fire-and-forget)
+    try:
+        from agents.database import remove_db
+        remove_db(str(project_id))
     except Exception:
         pass
 
@@ -612,9 +619,11 @@ async def clarify_prompt(
             {
                 "role": "system",
                 "content": (
-                    "You help clarify web app build requests. Decide if you need one quick clarifying question "
-                    "to produce a better result. Ask about: color scheme, specific text/branding, key feature "
-                    "details, or target audience — but only when the answer would meaningfully change what gets built.\n\n"
+                    "You help clarify Next.js web app build requests. The app will always be built with "
+                    "Next.js 14 (Pages Router), Tailwind CSS, and PostgreSQL — never ask about the tech stack.\n"
+                    "Decide if you need ONE quick clarifying question to produce a better result. "
+                    "Ask about: color scheme/style, specific text or branding, key feature details, "
+                    "or target audience — only when the answer would meaningfully change what gets built.\n\n"
                     "Respond ONLY with valid JSON:\n"
                     '{"needs_clarification": false}\n'
                     "OR\n"
@@ -643,11 +652,26 @@ async def generate_plan(
             messages=[
                 {
                     "role": "system",
-                    "content": "You are an expert web app architect. Given a project description, create a detailed plan for building it. Be specific about pages, components, features, and tech stack. Format as a clear, bullet-pointed plan."
+                    "content": (
+                        "You are an expert web app architect. Create a concise implementation plan for a web app.\n\n"
+                        "FIXED TECH STACK — always use exactly this, never suggest alternatives:\n"
+                        "- Framework: Next.js 14 (Pages Router, .js/.jsx files — NO TypeScript)\n"
+                        "- Styling: Tailwind CSS (standard utility classes only)\n"
+                        "- Database: PostgreSQL via the 'pg' npm package (DATABASE_URL is pre-configured)\n"
+                        "- API: Next.js API routes (/pages/api/*.js) — no Express, no separate backend\n"
+                        "- No MongoDB, no Firebase, no Prisma, no Redux, no separate deployment\n\n"
+                        "Format the plan as clean markdown with:\n"
+                        "- A short objective paragraph\n"
+                        "- Pages & components list\n"
+                        "- Key features\n"
+                        "- Database tables needed (if any)\n"
+                        "- API routes needed (if any)\n"
+                        "Keep it concise — this is a preview for the user before building starts."
+                    )
                 },
                 {
                     "role": "user",
-                    "content": f"Create a detailed implementation plan for: {body.description}"
+                    "content": f"Create a plan for: {body.description}"
                 }
             ],
             temperature=0.7,

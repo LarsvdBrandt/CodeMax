@@ -6,17 +6,21 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, text
 
+import json as _json
+
 from models import Task, Project, ProjectFile, ProjectStatus, TaskStatus
 from agents.analyzer import analyze
 from agents.retriever import retrieve_context
 from agents.planner import plan
-from agents.codegen import generate_file, generate_architecture_summary, fix_errors
+from agents.codegen import generate_file, generate_architecture_summary, fix_errors, has_typescript, strip_typescript
 from agents.builder import (
     provision_preview, seed_template, get_container_errors,
     extract_missing_packages, install_package_in_container,
     run_npm_install, touch_failing_files,
 )
 from agents.api_keys import scan_project_for_keys, write_env_local, ENV_VAR_MAP
+from agents.database import provision_db, get_schema_info, apply_schema, build_db_context
+from agents.db_agent import plan_db_schema
 
 PROJECTS_DIR = os.environ.get("PROJECTS_DIR", "/projects")
 
@@ -63,6 +67,46 @@ async def run_pipeline(task_id: str, project_id: str, prompt: str, db: AsyncSess
         project_dir = Path(PROJECTS_DIR) / project_id
         seed_template(project_dir)
 
+        # Step 2b — Provision per-project Postgres database
+        log = _log_step(log, "provision_db", "running", "Starting database container...")
+        await _save_log(db, task, log)
+
+        try:
+            database_url = provision_db(project_id)
+            write_env_local(project_dir, {"DATABASE_URL": database_url})
+
+            # Ensure `pg` is in package.json so the container installs it
+            pkg_json_path = project_dir / "package.json"
+            if pkg_json_path.exists():
+                pkg = _json.loads(pkg_json_path.read_text())
+                pkg.setdefault("dependencies", {}).setdefault("pg", "^8.11.0")
+                pkg_json_path.write_text(_json.dumps(pkg, indent=2))
+                # Sync to DB
+                pkg_file_result = await db.execute(
+                    select(ProjectFile).where(
+                        ProjectFile.project_id == project_uuid,
+                        ProjectFile.file_path == "package.json",
+                    )
+                )
+                pf = pkg_file_result.scalar_one_or_none()
+                pkg_content = pkg_json_path.read_text()
+                if pf:
+                    pf.content = pkg_content
+                    pf.updated_at = _now()
+                else:
+                    db.add(ProjectFile(
+                        id=uuid.uuid4(),
+                        project_id=project_uuid,
+                        file_path="package.json",
+                        content=pkg_content,
+                    ))
+                await db.commit()
+
+            log = _log_step(log, "provision_db", "done", "Database ready")
+        except Exception as db_exc:
+            log = _log_step(log, "provision_db", "error", f"DB provision failed (continuing): {db_exc}")
+        await _save_log(db, task, log)
+
         # Step 3a — Get existing files
         files_result = await db.execute(
             select(ProjectFile).where(ProjectFile.project_id == project_uuid)
@@ -100,6 +144,12 @@ async def run_pipeline(task_id: str, project_id: str, prompt: str, db: AsyncSess
         await _save_log(db, task, log)
 
         # Step 6 — Code generation
+        # Build db_context once before the loop so all files get the same schema snapshot
+        try:
+            db_ctx = build_db_context(project_id)
+        except Exception:
+            db_ctx = None
+
         for i, file_task in enumerate(tasks):
             file_path = file_task["file"]
             action = file_task.get("action", "modify")
@@ -119,7 +169,11 @@ async def run_pipeline(task_id: str, project_id: str, prompt: str, db: AsyncSess
                 log = _log_step(log, f"codegen_{i}", "done", f"Deleted {file_path}")
             else:
                 current_content = file_contexts.get(file_path)
-                content = await generate_file(description, file_path, current_content, arch_summary)
+                content = await generate_file(description, file_path, current_content, arch_summary, db_ctx)
+
+                # Pre-flight: strip TypeScript from .js/.jsx files before writing to disk
+                if file_path.endswith((".js", ".jsx")) and has_typescript(content):
+                    content = await strip_typescript(content, file_path)
 
                 dest = project_dir / file_path
                 dest.parent.mkdir(parents=True, exist_ok=True)
@@ -183,7 +237,34 @@ async def run_pipeline(task_id: str, project_id: str, prompt: str, db: AsyncSess
             ))
         await db.commit()
 
-        # Step 7b — Check for required API keys
+        # Step 7b — Schema agent: inspect generated code and apply DB migrations
+        log = _log_step(log, "schema", "running", "Analysing database schema requirements...")
+        await _save_log(db, task, log)
+        try:
+            all_src_result = await db.execute(
+                select(ProjectFile).where(ProjectFile.project_id == project_uuid)
+            )
+            src_files = {
+                f.file_path: f.content
+                for f in all_src_result.scalars().all()
+                if not f.file_path.startswith("_meta/")
+            }
+            current_schema = get_schema_info(project_id)
+            schema_plan = await plan_db_schema(prompt, src_files, current_schema)
+
+            if schema_plan.get("needs_db") and schema_plan.get("schema_sql", "").strip():
+                ok, output = apply_schema(project_id, schema_plan["schema_sql"])
+                detail = schema_plan.get("description", "Schema applied")
+                if not ok:
+                    detail = f"Schema warning: {output[:200]}"
+                log = _log_step(log, "schema", "done", detail)
+            else:
+                log = _log_step(log, "schema", "done", "No schema changes needed")
+        except Exception as schema_exc:
+            log = _log_step(log, "schema", "error", f"Schema agent failed (non-fatal): {schema_exc}")
+        await _save_log(db, task, log)
+
+        # Step 7c — API key check
         required_keys = scan_project_for_keys(project_dir)
         if required_keys:
             # Fetch keys the user has stored

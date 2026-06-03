@@ -36,11 +36,13 @@ Existing file contents:
 {context_text or "(no existing files — this is a new project)"}
 
 Rules:
-- Use pages/ directory (Next.js pages router, plain JS not TS)
+- Use pages/ directory (Next.js pages router, plain .js/.jsx files — NO TypeScript)
 - Use Tailwind for all styling
 - Functional components only
 - Keep it minimal — only create files needed for the feature
-- For a new project, always include: pages/index.js, pages/_app.js, styles/globals.css
+- For a new project always include: pages/index.js, styles/globals.css
+- NEVER include pages/_app.js or pages/_document.js unless the user explicitly asks to change global app setup — these are already correct boilerplate files in the template
+- All generated code must be plain JavaScript. No TypeScript type annotations in .js files.
 
 Return a JSON plan matching this schema:
 {SCHEMA}"""

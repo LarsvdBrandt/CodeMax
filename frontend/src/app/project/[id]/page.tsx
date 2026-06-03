@@ -42,20 +42,24 @@ const ChevronIcon = ({ open }: { open: boolean }) => (
 // ─── Build feed — streaming step animation ────────────────────────────────────
 
 const STEP_MSGS: Record<string, string[]> = {
-  start:    ["Thinking...", "Understanding your request...", "Getting ready..."],
-  analyze:  ["Analyzing codebase...", "Reading file structure...", "Identifying what to change..."],
-  retrieve: ["Loading context...", "Reading relevant files...", "Gathering code context..."],
-  plan:     ["Planning changes...", "Deciding what to update...", "Mapping out the approach..."],
-  build:    ["Starting server...", "Installing packages...", "Booting preview..."],
-  autofix:  ["Found a compile error...", "Diagnosing the issue...", "Rewriting the fix..."],
+  start:        ["Thinking...", "Understanding your request...", "Getting ready..."],
+  analyze:      ["Analyzing codebase...", "Reading file structure...", "Identifying what to change..."],
+  retrieve:     ["Loading context...", "Reading relevant files...", "Gathering code context..."],
+  plan:         ["Planning changes...", "Deciding what to update...", "Mapping out the approach..."],
+  provision_db: ["Starting database...", "Provisioning PostgreSQL...", "Getting database ready..."],
+  schema:       ["Checking database schema...", "Planning migrations...", "Updating tables..."],
+  build:        ["Starting server...", "Installing packages...", "Booting preview..."],
+  autofix:      ["Found a compile error...", "Diagnosing the issue...", "Rewriting the fix..."],
 };
 
 function getDoneLabel(step: string, detail: string): string {
-  if (step === "start")    return "Understood your request";
-  if (step === "analyze")  return `Analyzed codebase`;
-  if (step === "retrieve") return `Loaded context`;
-  if (step === "plan")     return `Created a plan`;
-  if (step === "build")    return "Preview launched";
+  if (step === "start")        return "Understood your request";
+  if (step === "analyze")      return "Analyzed codebase";
+  if (step === "retrieve")     return "Loaded context";
+  if (step === "plan")         return "Created a plan";
+  if (step === "provision_db") return detail.startsWith("DB provision failed") ? detail : "Database ready";
+  if (step === "schema")       return detail.startsWith("Schema") ? detail : `DB: ${detail}`;
+  if (step === "build")        return "Preview launched";
   if (step.match(/^codegen_\d+$/)) {
     const f = detail.split(":")[1]?.trim().split(" ")[0] ?? "file";
     return `Wrote ${f}`;
@@ -65,12 +69,16 @@ function getDoneLabel(step: string, detail: string): string {
 }
 
 // Single step row — fades in from below
-function StepRow({ label, done, active, index }: { label: string; done?: boolean; active?: boolean; index: number }) {
+function StepRow({ label, done, error, active, index }: { label: string; done?: boolean; error?: boolean; active?: boolean; index: number }) {
   return (
     <div className="flex items-center gap-2.5"
       style={{ animation: `stepIn 0.28s cubic-bezier(0.16,1,0.3,1) both`, animationDelay: `${index * 30}ms` }}>
       <div className="relative flex-shrink-0 w-3.5 h-3.5 flex items-center justify-center">
-        {done ? (
+        {error ? (
+          <svg className="w-3 h-3 text-red-500/60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        ) : done ? (
           <svg className="w-3 h-3 text-green-500/50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
           </svg>
@@ -194,14 +202,14 @@ function CodegenRow({ detail, index }: { detail: string; index: number }) {
 }
 
 function BuildFeed({ log, taskStatus }: { log: TaskRecord["agent_log"]; taskStatus: string }) {
-  const done    = log.filter(e => e.status === "done");
+  const done    = log.filter(e => e.status === "done" || e.status === "error");
   const running = [...log].reverse().find(e => e.status === "running");
 
   return (
     <div className="pt-1 pb-0.5 space-y-2">
-      {/* All done steps */}
+      {/* All done/error steps */}
       {done.map((e, i) => (
-        <StepRow key={i} label={getDoneLabel(e.step, e.detail)} done index={i} />
+        <StepRow key={i} label={getDoneLabel(e.step, e.detail)} done={e.status === "done"} error={e.status === "error"} index={i} />
       ))}
 
       {/* Active step */}
