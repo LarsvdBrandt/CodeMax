@@ -537,29 +537,47 @@ function UrlBar({
 // ─── Speech-to-text hook ──────────────────────────────────────────────────────
 function useSpeechToText(onResult: (text: string) => void) {
   const [listening, setListening] = useState(false);
-  const recogRef = useRef<typeof window.SpeechRecognition extends undefined ? never : InstanceType<typeof window.SpeechRecognition> | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recogRef = useRef<any>(null);
 
   function toggle() {
     if (listening) {
       recogRef.current?.stop();
+      setListening(false);
       return;
     }
-    const SR = (window as Window & { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown }).SpeechRecognition
-            || (window as Window & { SpeechRecognition?: unknown; webkitSpeechRecognition?: unknown }).webkitSpeechRecognition;
-    if (!SR) return;
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const recognition = new (SR as any)();
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.lang = "en-US";
-    recognition.onstart  = () => setListening(true);
-    recognition.onend    = () => setListening(false);
-    recognition.onerror  = () => setListening(false);
-    recognition.onresult = (e: { results: { [k: number]: { [k: number]: { transcript: string } } } }) => {
-      onResult(e.results[0][0].transcript);
+    const w = window as any;
+    const SR = w.SpeechRecognition || w.webkitSpeechRecognition;
+    if (!SR) {
+      alert("Speech recognition is not supported in this browser. Try Chrome or Edge.");
+      return;
+    }
+
+    const r = new SR();
+    r.continuous      = true;   // keep recording until stopped
+    r.interimResults  = true;   // show partial results
+    r.lang            = "en-US";
+    r.maxAlternatives = 1;
+
+    r.onstart = () => setListening(true);
+    r.onerror = () => { setListening(false); recogRef.current = null; };
+    r.onend   = () => { setListening(false); recogRef.current = null; };
+
+    r.onresult = (e: any) => {
+      // Collect all final segments; ignore interim ones
+      let transcript = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) {
+          transcript += e.results[i][0].transcript;
+        }
+      }
+      if (transcript.trim()) onResult(transcript.trim());
     };
-    recogRef.current = recognition;
-    recognition.start();
+
+    recogRef.current = r;
+    r.start();
   }
 
   return { listening, toggle };
@@ -764,22 +782,21 @@ export default function ProjectPage() {
               <button type="button" onClick={toggleMic} disabled={isBuilding}
                 title={listening ? "Stop recording" : "Speak your prompt"}
                 className={`absolute bottom-3 right-3 w-7 h-7 rounded-[8px] flex items-center justify-center transition-all disabled:opacity-30 ${
-                  listening
-                    ? "bg-red-500/20 text-red-400"
-                    : "text-[#444] hover:text-white hover:bg-[#1a1a1a]"
+                  listening ? "bg-red-500/15 text-red-400" : "text-[#555] hover:text-white hover:bg-[#1a1a1a]"
                 }`}>
                 {listening ? (
-                  /* Pulsing recording indicator */
-                  <span className="relative flex items-center justify-center">
-                    <span className="absolute w-5 h-5 rounded-full bg-red-500/20"
-                      style={{ animation: "micPulse 1s ease-out infinite" }} />
-                    <svg className="w-4 h-4 relative" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3zM19 10v2a7 7 0 01-14 0v-2H3v2a9 9 0 008 8.94V23h2v-2.06A9 9 0 0021 12v-2h-2z"/>
-                    </svg>
+                  /* Animated waveform bars when recording */
+                  <span className="flex items-end gap-[2px] h-4">
+                    {[0, 1, 2, 3].map(i => (
+                      <span key={i} className="w-[3px] bg-red-400 rounded-full"
+                        style={{ animation: `wave 0.8s ease-in-out ${i * 0.12}s infinite alternate`, height: "40%" }} />
+                    ))}
+                    <style>{`@keyframes wave{from{height:25%}to{height:100%}}`}</style>
                   </span>
                 ) : (
+                  /* Mic icon at rest */
                   <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                    <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3zM19 10v2a7 7 0 01-14 0v-2H3v2a9 9 0 008 8.94V23h2v-2.06A9 9 0 0021 12v-2h-2z"/>
+                    <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3zm-1 3a1 1 0 012 0v8a1 1 0 01-2 0V4zM8 11H6v1a6 6 0 005 5.92V20H9v2h6v-2h-2v-2.08A6 6 0 0018 12v-1h-2v1a4 4 0 01-8 0v-1z"/>
                   </svg>
                 )}
               </button>
