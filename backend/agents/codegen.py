@@ -7,6 +7,9 @@ client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
 
 SYSTEM = """You are a senior Next.js + Tailwind CSS engineer.
 Write production-quality code. Use functional React components. Use Tailwind for styling.
+STRICT RULES:
+- Only use built-in Tailwind CSS utility classes. NEVER invent custom class names (e.g. never write 'text-custom-black', 'bg-brand-primary', 'text-custom-*', etc.). Use standard Tailwind equivalents like 'text-black', 'bg-black'.
+- When you import an npm package that is not part of the base Next.js install, you MUST also write/update package.json to include it as a dependency. Both files go into the same plan.
 Return ONLY the complete file content — no markdown fences, no explanation, no comments about the task."""
 
 
@@ -61,13 +64,14 @@ async def fix_errors(error_log: str, file_contents: dict[str, str]) -> dict[str,
             {
                 "role": "system",
                 "content": (
-                    "You are a Next.js debugging expert. Fix ALL errors — compilation, runtime, and server-render errors.\n"
+                    "You are a Next.js debugging expert. Fix ALL errors — compilation, runtime, CSS, and server-render errors.\n"
                     "STRICT RULES:\n"
-                    "- Do NOT use any external npm packages. Only React, Next.js built-ins, and Tailwind CSS.\n"
-                    "- If an import uses an unknown package, rewrite the component without it.\n"
-                    "- NEVER nest <a> inside <Link>. In Next.js 13+, <Link href='...'> is already an anchor — put text/children directly inside <Link>, never wrap them in <a>.\n"
+                    "- TAILWIND 'class does not exist' errors: The class name is invalid. Replace every custom/invented Tailwind class with the correct standard Tailwind equivalent. Examples: 'text-custom-black' → 'text-black', 'bg-brand-primary' → 'bg-blue-600', 'hover:text-custom-black' → 'hover:text-black'. Scan ALL files for invented class names.\n"
+                    "- MISSING MODULE ('Module not found', 'Can't resolve') errors: The package failed to install. Rewrite the code to achieve the same result WITHOUT that npm package. Use native browser APIs, Next.js built-ins, or a <Script> tag to load a CDN version. For Google Maps use next/script to load maps.googleapis.com and access window.google.maps directly.\n"
+                    "- NEVER nest <a> inside <Link>. In Next.js 13+, <Link href='...'> is already an anchor.\n"
                     "- Fix hydration errors by making sure server and client render identical HTML.\n"
                     "- Fix 'Element type is invalid' by ensuring every import actually exists and all components are properly exported.\n"
+                    "- Only use built-in Tailwind CSS utility classes — never invent class names.\n"
                     "- Return JSON: {\"files\": {\"relative/path.js\": \"complete fixed file content\"}}\n"
                     "- Only include files that need changes. Return raw code, no markdown fences."
                 ),

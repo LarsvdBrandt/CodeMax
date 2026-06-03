@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   getProject, getProjectStatus, listFiles, listTasks, sendPrompt, retryProject,
   stopPreview, startPreview, getPreviewLogs, clarifyPrompt, provideApiKey,
-  detectKeys, createApiKey, ApiError,
+  detectKeys, createApiKey, renameProject, ApiError,
   type Project, type ProjectFile, type ProjectStatus, type TaskRecord, type MissingKey,
 } from "@/lib/api";
 import FileExplorer from "@/components/FileExplorer";
@@ -764,6 +764,8 @@ export default function ProjectPage() {
   const [prompt,       setPrompt]       = useState("");
   const [sending,      setSending]      = useState(false);
   const [sendError,    setSendError]    = useState("");
+  const [titleEditing, setTitleEditing] = useState(false);
+  const [titleValue,   setTitleValue]   = useState("");
   const [powerLoading, setPowerLoading] = useState(false);
   const { listening, toggle: toggleMic } = useSpeechToText(text =>
     setPrompt(p => p ? `${p} ${text}` : text)
@@ -1028,7 +1030,35 @@ export default function ProjectPage() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
             </svg>
           </Link>
-          <span className="font-medium text-sm truncate text-white flex-1 px-1">{project?.name ?? "..."}</span>
+          {titleEditing ? (
+            <input
+              autoFocus
+              value={titleValue}
+              onChange={e => setTitleValue(e.target.value)}
+              onBlur={async () => {
+                setTitleEditing(false);
+                const trimmed = titleValue.trim();
+                if (!trimmed || trimmed === project?.name) return;
+                try {
+                  const updated = await renameProject(id, trimmed);
+                  setProject(updated);
+                } catch { setTitleValue(project?.name ?? ""); }
+              }}
+              onKeyDown={e => {
+                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                if (e.key === "Escape") { setTitleEditing(false); setTitleValue(project?.name ?? ""); }
+              }}
+              className="flex-1 min-w-0 px-1.5 py-0.5 bg-[#1a1a1a] border border-[#333] rounded-[6px] text-sm font-medium text-white focus:outline-none focus:border-[#555]"
+            />
+          ) : (
+            <button
+              onClick={() => { setTitleValue(project?.name ?? ""); setTitleEditing(true); }}
+              className="font-medium text-sm truncate text-white flex-1 px-1 text-left hover:text-[#aaa] transition-colors"
+              title="Click to rename"
+            >
+              {project?.name ?? "..."}
+            </button>
+          )}
           <button onClick={() => setChatOpen(false)} title="Collapse chat"
             className="p-1.5 text-[#444] hover:text-white transition-colors rounded-[8px] hover:bg-[#1a1a1a] flex-shrink-0">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

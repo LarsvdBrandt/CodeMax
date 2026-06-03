@@ -152,6 +152,13 @@ export async function deleteProject(projectId: string): Promise<void> {
   return request(`/projects/${projectId}`, { method: "DELETE" });
 }
 
+export async function renameProject(id: string, name: string): Promise<Project> {
+  return request(`/projects/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
+  });
+}
+
 // ─── User / settings ─────────────────────────────────────────────────────────
 
 export interface UserProfile {

@@ -1,5 +1,6 @@
 """Manages Docker containers for user app previews."""
 import os
+import re
 import time
 import shutil
 import httpx
@@ -108,6 +109,9 @@ ERROR_INDICATORS = [
     "Failed to compile",
     "SyntaxError",
     "Cannot find module",
+    # Tailwind / PostCSS
+    "class does not exist",
+    "does not exist. If",
     # Runtime / Next.js server errors
     "ReferenceError",
     "TypeError:",
@@ -123,12 +127,95 @@ ERROR_INDICATORS = [
     "Error: Text content does not match",
 ]
 
+# Matches: Can't resolve 'some-pkg' or Can't resolve '@scope/pkg'
+_MISSING_PKG_RE = re.compile(r"Can't resolve '([^']+)'")
+
+
+def extract_missing_packages(error_log: str) -> list[str]:
+    """Return npm package names referenced in 'Can't resolve' errors."""
+    pkgs: set[str] = set()
+    for m in _MISSING_PKG_RE.finditer(error_log):
+        raw = m.group(1)
+        if raw.startswith(".") or raw.startswith("/"):
+            continue  # skip relative / absolute imports
+        if raw.startswith("@"):
+            # @scope/package[/subpath] → @scope/package
+            parts = raw.split("/")
+            pkg = "/".join(parts[:2]) if len(parts) >= 2 else raw
+        else:
+            # package[/subpath] → package
+            pkg = raw.split("/")[0]
+        pkgs.add(pkg)
+    return list(pkgs)
+
+
+def install_package_in_container(project_id: str, package: str) -> bool:
+    """Run `npm install <package>` inside the running preview container."""
+    dc = _docker_client()
+    try:
+        container = dc.containers.get(f"codemax_preview_{project_id}")
+        result = container.exec_run(
+            ["npm", "install", package],
+            workdir=f"/projects/{project_id}",
+        )
+        return result.exit_code == 0
+    except Exception:
+        return False
+
+
+def run_npm_install(project_id: str) -> bool:
+    """Run full `npm install` in the container (installs everything in package.json)."""
+    dc = _docker_client()
+    try:
+        container = dc.containers.get(f"codemax_preview_{project_id}")
+        result = container.exec_run(
+            ["npm", "install"],
+            workdir=f"/projects/{project_id}",
+        )
+        return result.exit_code == 0
+    except Exception:
+        return False
+
+
+# Matches relative file references in Next.js error output: ./utils/googleMaps.js:1:1
+_ERROR_FILE_RE = re.compile(r"\./([a-zA-Z0-9/_\-]+\.(js|jsx|ts|tsx|mjs|cjs))")
+
+
+def touch_failing_files(project_id: str, error_log: str) -> list[str]:
+    """Rewrite files mentioned in the error log to trigger Next.js hot-reload via chokidar polling."""
+    touched: list[str] = []
+    seen: set[str] = set()
+    for m in _ERROR_FILE_RE.finditer(error_log):
+        rel = m.group(1)
+        if rel in seen:
+            continue
+        seen.add(rel)
+        abs_path = Path(PROJECTS_DIR) / project_id / rel
+        try:
+            if abs_path.exists():
+                abs_path.write_text(abs_path.read_text())
+                touched.append(rel)
+        except OSError:
+            pass
+    return touched
+
 
 def stop_container(project_id: str) -> bool:
     dc = _docker_client()
     try:
         c = dc.containers.get(f"codemax_preview_{project_id}")
         c.stop(timeout=5)
+        return True
+    except docker.errors.NotFound:
+        return False
+
+
+def remove_container(project_id: str) -> bool:
+    """Force-stop and remove the preview container for a project."""
+    dc = _docker_client()
+    try:
+        c = dc.containers.get(f"codemax_preview_{project_id}")
+        c.remove(force=True)
         return True
     except docker.errors.NotFound:
         return False
@@ -222,7 +309,13 @@ def start_or_rebuild_container(project_id: str, existing_container_id: str | Non
         network=DOCKER_NETWORK,
         name=f"codemax_preview_{project_id}",
         remove=False,
-        environment={"NODE_ENV": "development"},
+        environment={
+            "NODE_ENV": "development",
+            # Force polling so file writes from the backend container trigger hot-reload
+            # (named Docker volumes don't propagate inotify events between containers)
+            "CHOKIDAR_USEPOLLING": "true",
+            "CHOKIDAR_INTERVAL": "500",
+        },
     )
 
     return container.id, port

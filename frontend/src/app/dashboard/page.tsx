@@ -36,8 +36,9 @@ export default function DashboardPage() {
   const [user,     setUser]       = useState<UserProfile | null>(null);
   const [loading,  setLoading]    = useState(true);
   const [query,    setQuery]      = useState("");
-  const [menuOpen, setMenuOpen]   = useState<string | null>(null);
-  const [deleting, setDeleting]   = useState<string | null>(null);
+  const [menuOpen,      setMenuOpen]      = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [deleting,      setDeleting]      = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -51,7 +52,10 @@ export default function DashboardPage() {
   // Close menu on outside click
   useEffect(() => {
     function handle(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(null);
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(null);
+        setConfirmDelete(null);
+      }
     }
     document.addEventListener("mousedown", handle);
     return () => document.removeEventListener("mousedown", handle);
@@ -59,8 +63,7 @@ export default function DashboardPage() {
 
   async function handleDelete(projectId: string, e: React.MouseEvent) {
     e.preventDefault(); e.stopPropagation();
-    if (!confirm("Delete this project? This cannot be undone.")) return;
-    setDeleting(projectId); setMenuOpen(null);
+    setDeleting(projectId); setMenuOpen(null); setConfirmDelete(null);
     try { await deleteProject(projectId); setProjects(ps => ps.filter(p => p.id !== projectId)); }
     catch (err) { if (err instanceof ApiError && err.status === 401) router.replace("/login"); }
     finally { setDeleting(null); }
@@ -141,8 +144,13 @@ export default function DashboardPage() {
 
                   {/* Ellipsis menu */}
                   <button
-                    onClick={e => { e.preventDefault(); setMenuOpen(menuOpen === p.id ? null : p.id); }}
-                    className="absolute right-12 top-1/2 -translate-y-1/2 p-1.5 text-[#2a2a2a] hover:text-[#777] opacity-0 group-hover:opacity-100 transition-all rounded-[6px] hover:bg-[#1a1a1a]"
+                    onClick={e => {
+                      e.preventDefault();
+                      const next = menuOpen === p.id ? null : p.id;
+                      setMenuOpen(next);
+                      if (!next) setConfirmDelete(null);
+                    }}
+                    className="absolute right-12 top-1/2 -translate-y-1/2 p-1.5 text-[#444] hover:text-[#aaa] opacity-0 group-hover:opacity-100 transition-all rounded-[6px] hover:bg-[#1a1a1a]"
                   >
                     <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
                       <circle cx="5" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="19" cy="12" r="1.5" />
@@ -151,11 +159,38 @@ export default function DashboardPage() {
 
                   {menuOpen === p.id && (
                     <div ref={menuRef}
-                      className="absolute right-10 top-1/2 -translate-y-1/2 bg-[#111] border border-[#222] rounded-[10px] z-20 overflow-hidden min-w-[120px] shadow-xl">
-                      <button onClick={e => handleDelete(p.id, e)} disabled={deleting === p.id}
-                        className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50">
-                        {deleting === p.id ? "Deleting..." : "Delete"}
-                      </button>
+                      className="absolute right-10 top-1/2 -translate-y-1/2 bg-[#111] border border-[#222] rounded-[12px] z-20 shadow-xl overflow-hidden"
+                      style={{ minWidth: confirmDelete === p.id ? 200 : 120 }}>
+
+                      {confirmDelete === p.id ? (
+                        /* Confirmation panel */
+                        <div className="px-4 py-3 space-y-3">
+                          <div>
+                            <p className="text-xs font-medium text-white">Delete project?</p>
+                            <p className="text-[11px] text-[#555] mt-0.5">This cannot be undone.</p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={e => { e.preventDefault(); e.stopPropagation(); setConfirmDelete(null); setMenuOpen(null); }}
+                              className="flex-1 text-xs text-[#666] hover:text-white py-1.5 rounded-[6px] hover:bg-[#1e1e1e] transition-colors">
+                              Cancel
+                            </button>
+                            <button
+                              onClick={e => handleDelete(p.id, e)}
+                              disabled={deleting === p.id}
+                              className="flex-1 text-xs text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 py-1.5 rounded-[6px] transition-colors disabled:opacity-50">
+                              {deleting === p.id ? "Deleting…" : "Delete"}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        /* Initial menu */
+                        <button
+                          onClick={e => { e.preventDefault(); e.stopPropagation(); setConfirmDelete(p.id); }}
+                          className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/10 transition-colors">
+                          Delete
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>

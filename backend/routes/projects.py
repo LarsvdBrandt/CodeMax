@@ -378,6 +378,29 @@ async def list_tasks(
     return result.scalars().all()
 
 
+class ProjectUpdateRequest(BaseModel):
+    name: str
+
+
+@router.patch("/{project_id}", response_model=ProjectOut)
+async def update_project(
+    project_id: uuid.UUID,
+    body: ProjectUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    result = await db.execute(
+        select(Project).where(Project.id == project_id, Project.user_id == current_user.id)
+    )
+    project = result.scalar_one_or_none()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    project.name = body.name.strip() or project.name
+    project.updated_at = datetime.utcnow()
+    await db.commit()
+    return project
+
+
 class ProvideKeyRequest(BaseModel):
     env_var: str
     key_value: str
@@ -521,12 +544,30 @@ async def delete_project(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    import shutil
+    from agents.builder import remove_container
+
     result = await db.execute(
         select(Project).where(Project.id == project_id, Project.user_id == current_user.id)
     )
     project = result.scalar_one_or_none()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    # Remove Docker container (fire-and-forget, don't fail if missing)
+    try:
+        remove_container(str(project_id))
+    except Exception:
+        pass
+
+    # Remove project files from volume
+    projects_dir = os.environ.get("PROJECTS_DIR", "/projects")
+    project_dir = Path(projects_dir) / str(project_id)
+    try:
+        if project_dir.exists():
+            shutil.rmtree(project_dir, ignore_errors=True)
+    except Exception:
+        pass
 
     await db.delete(project)
     await db.commit()

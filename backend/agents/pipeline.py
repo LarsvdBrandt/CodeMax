@@ -11,7 +11,11 @@ from agents.analyzer import analyze
 from agents.retriever import retrieve_context
 from agents.planner import plan
 from agents.codegen import generate_file, generate_architecture_summary, fix_errors
-from agents.builder import provision_preview, seed_template, get_container_errors
+from agents.builder import (
+    provision_preview, seed_template, get_container_errors,
+    extract_missing_packages, install_package_in_container,
+    run_npm_install, touch_failing_files,
+)
 from agents.api_keys import scan_project_for_keys, write_env_local, ENV_VAR_MAP
 
 PROJECTS_DIR = os.environ.get("PROJECTS_DIR", "/projects")
@@ -261,7 +265,66 @@ async def run_pipeline(task_id: str, project_id: str, prompt: str, db: AsyncSess
             )
             await _save_log(db, task, log)
 
-            # Gather current app files as context (skip meta)
+            # ── 9a: Handle missing npm packages ───────────────────────────
+            missing_pkgs = extract_missing_packages(error_log_text)
+            if missing_pkgs:
+                # Step 1: try a full `npm install` first — this handles packages that
+                # are already in package.json but weren't installed when the container
+                # started (the most common case after codegen adds a dependency).
+                full_install_ok = run_npm_install(project_id)
+                all_failed = False
+
+                if not full_install_ok:
+                    # Fallback: install each missing package explicitly
+                    failed_pkgs: list[str] = []
+                    for pkg in missing_pkgs:
+                        if not install_package_in_container(project_id, pkg):
+                            failed_pkgs.append(pkg)
+                    if failed_pkgs:
+                        all_failed = True
+                        error_log_text += (
+                            f"\n\nFailed to install via npm: {', '.join(failed_pkgs)}. "
+                            "Rewrite the code to avoid these packages entirely."
+                        )
+                        # Fall through to code-level fix below
+
+                if not all_failed:
+                    # Sync updated package.json back to DB so future codegens see it
+                    pkg_json_path = project_dir / "package.json"
+                    if pkg_json_path.exists():
+                        pkg_content = pkg_json_path.read_text()
+                        pkg_res = await db.execute(
+                            select(ProjectFile).where(
+                                ProjectFile.project_id == project_uuid,
+                                ProjectFile.file_path == "package.json",
+                            )
+                        )
+                        pkg_file = pkg_res.scalar_one_or_none()
+                        if pkg_file:
+                            pkg_file.content = pkg_content
+                            pkg_file.updated_at = _now()
+                        else:
+                            db.add(ProjectFile(
+                                id=uuid.uuid4(),
+                                project_id=project_uuid,
+                                file_path="package.json",
+                                content=pkg_content,
+                            ))
+                        await db.commit()
+
+                    # Rewrite failing source files to trigger chokidar polling recompile.
+                    # CHOKIDAR_USEPOLLING=true is set in the container, so mtime changes
+                    # on the shared volume are picked up even without inotify events.
+                    touch_failing_files(project_id, error_log_text)
+
+                    log = _log_step(
+                        log, f"autofix_{fix_attempt}", "done",
+                        f"Installed missing packages; triggered recompile...",
+                    )
+                    await _save_log(db, task, log)
+                    continue  # Next iteration will check if errors are gone
+
+            # ── 9b: Code-level fix (Tailwind, bad imports, runtime errors) ──
             cur_files_result = await db.execute(
                 select(ProjectFile).where(ProjectFile.project_id == project_uuid)
             )
@@ -274,7 +337,6 @@ async def run_pipeline(task_id: str, project_id: str, prompt: str, db: AsyncSess
             fixed = await fix_errors(error_log_text, file_contents)
 
             if not fixed:
-                # GPT couldn't figure out what to fix — stop trying
                 log = _log_step(log, f"autofix_{fix_attempt}", "done", "No files returned by fixer")
                 await _save_log(db, task, log)
                 break
