@@ -63,3 +63,55 @@ async def plan_db_schema(
     )
 
     return json.loads(resp.choices[0].message.content)
+
+
+async def generate_api_routes(
+    prompt: str,
+    schema_sql: str,
+    existing_page_files: dict[str, str],
+) -> dict[str, str]:
+    """Generate pages/api/*.js files and update the main page to use fetch().
+
+    Returns {file_path: content} for every file that needs to be written.
+    This runs AFTER schema is applied, ensuring the generated app actually
+    connects to the database regardless of what the planner chose.
+    """
+    files_text = "\n\n".join(
+        f"=== {path} ===\n{content}"
+        for path, content in list(existing_page_files.items())[:10]
+    )
+
+    resp = await client.chat.completions.create(
+        model="gpt-4o",
+        response_format={"type": "json_object"},
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You wire a Next.js app to its PostgreSQL database.\n"
+                    "Given the DB schema and the current frontend files, produce:\n"
+                    "1. pages/api/*.js handler files (one per resource/table) using `import { Pool } from 'pg'` and `export default async function handler(req, res)`.\n"
+                    "2. An updated version of the main page (pages/index.js) that fetches data from the API routes using useEffect + fetch(), replacing any localStorage or in-memory state.\n\n"
+                    "STRICT RULES:\n"
+                    "- Plain JavaScript only (.js files) — no TypeScript annotations.\n"
+                    "- CRITICAL: Use ESM syntax consistently. Use `import { Pool } from 'pg'` and "
+                    "`export default async function handler(req, res)`. "
+                    "NEVER use require() with export default in the same file — that breaks Next.js.\n"
+                    "- Every API handler must run CREATE TABLE IF NOT EXISTS before any query.\n"
+                    "- React component uses useState + useEffect + fetch('/api/route').\n"
+                    "- Keep all existing UI/styling — only replace the data layer.\n"
+                    'Return JSON: {"files": {"pages/api/todos.js": "...", "pages/index.js": "..."}}'
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"App prompt: {prompt}\n\n"
+                    f"Database schema:\n{schema_sql}\n\n"
+                    f"Current frontend files:\n{files_text}"
+                ),
+            },
+        ],
+    )
+    result = json.loads(resp.choices[0].message.content)
+    return result.get("files", {})

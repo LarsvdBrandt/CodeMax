@@ -6,7 +6,12 @@
       "Bash(curl -v http://localhost:8000/health)",
       "Bash(docker volume *)",
       "Bash(./node_modules/.bin/tsc --noEmit)",
-      "Bash(docker restart *)"
+      "Bash(docker restart *)",
+      "Bash(cat /projects/dd34ae81-f6e4-44c8-86dc-63999067d63a/pages/api/todos.js 2>/dev/null || find /Users/larsvandenbrandt/Repos/CodeMaxing/codemax -path \"*/projects/*/pages/api/todos.js\" 2>/dev/null | head -3)",
+      "Read(//projects/dd34ae81-f6e4-44c8-86dc-63999067d63a/pages/api/**)",
+      "Bash(docker exec *)",
+      "Bash(docker cp *)",
+      "Bash(curl -s http://localhost:__TRACKED_VAR__/api/todos)"
     ]
   }
 }

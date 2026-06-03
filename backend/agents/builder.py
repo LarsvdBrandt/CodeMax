@@ -109,6 +109,8 @@ ERROR_INDICATORS = [
     "Failed to compile",
     "SyntaxError",
     "Cannot find module",
+    # Next.js API route export errors
+    "does not export a default function",
     # TypeScript syntax in .js files (swc parser errors)
     "Expected ',', got ':'",
     "Expected expression",

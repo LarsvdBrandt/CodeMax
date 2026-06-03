@@ -48,6 +48,7 @@ const STEP_MSGS: Record<string, string[]> = {
   plan:         ["Planning changes...", "Deciding what to update...", "Mapping out the approach..."],
   provision_db: ["Starting database...", "Provisioning PostgreSQL...", "Getting database ready..."],
   schema:       ["Checking database schema...", "Planning migrations...", "Updating tables..."],
+  db_wiring:    ["Connecting app to database...", "Generating API routes...", "Wiring data layer..."],
   build:        ["Starting server...", "Installing packages...", "Booting preview..."],
   autofix:      ["Found a compile error...", "Diagnosing the issue...", "Rewriting the fix..."],
 };
@@ -59,6 +60,7 @@ function getDoneLabel(step: string, detail: string): string {
   if (step === "plan")         return "Created a plan";
   if (step === "provision_db") return detail.startsWith("DB provision failed") ? detail : "Database ready";
   if (step === "schema")       return detail.startsWith("Schema") ? detail : `DB: ${detail}`;
+  if (step === "db_wiring")    return detail.startsWith("DB wiring failed") ? detail : detail;
   if (step === "build")        return "Preview launched";
   if (step.match(/^codegen_\d+$/)) {
     const f = detail.split(":")[1]?.trim().split(" ")[0] ?? "file";

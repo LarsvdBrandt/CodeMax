@@ -560,10 +560,10 @@ async def delete_project(
     except Exception:
         pass
 
-    # Remove database container (fire-and-forget)
+    # Drop the project's database (fire-and-forget)
     try:
         from agents.database import remove_db
-        remove_db(str(project_id))
+        await remove_db(str(project_id))
     except Exception:
         pass
 

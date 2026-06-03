@@ -12,7 +12,11 @@ from models import Task, Project, ProjectFile, ProjectStatus, TaskStatus
 from agents.analyzer import analyze
 from agents.retriever import retrieve_context
 from agents.planner import plan
-from agents.codegen import generate_file, generate_architecture_summary, fix_errors, has_typescript, strip_typescript
+from agents.codegen import (
+    generate_file, generate_architecture_summary, fix_errors,
+    has_typescript, strip_typescript,
+    is_api_route, fix_cjs_exports, has_cjs_exports,
+)
 from agents.builder import (
     provision_preview, seed_template, get_container_errors,
     extract_missing_packages, install_package_in_container,
@@ -20,7 +24,7 @@ from agents.builder import (
 )
 from agents.api_keys import scan_project_for_keys, write_env_local, ENV_VAR_MAP
 from agents.database import provision_db, get_schema_info, apply_schema, build_db_context
-from agents.db_agent import plan_db_schema
+from agents.db_agent import plan_db_schema, generate_api_routes
 
 PROJECTS_DIR = os.environ.get("PROJECTS_DIR", "/projects")
 
@@ -67,21 +71,20 @@ async def run_pipeline(task_id: str, project_id: str, prompt: str, db: AsyncSess
         project_dir = Path(PROJECTS_DIR) / project_id
         seed_template(project_dir)
 
-        # Step 2b — Provision per-project Postgres database
-        log = _log_step(log, "provision_db", "running", "Starting database container...")
+        # Step 2b — Provision per-project database (inside the shared postgres service)
+        log = _log_step(log, "provision_db", "running", "Creating project database...")
         await _save_log(db, task, log)
 
         try:
-            database_url = provision_db(project_id)
+            database_url = await provision_db(project_id)
             write_env_local(project_dir, {"DATABASE_URL": database_url})
 
-            # Ensure `pg` is in package.json so the container installs it
+            # Ensure `pg` is in package.json so npm install picks it up
             pkg_json_path = project_dir / "package.json"
             if pkg_json_path.exists():
                 pkg = _json.loads(pkg_json_path.read_text())
                 pkg.setdefault("dependencies", {}).setdefault("pg", "^8.11.0")
                 pkg_json_path.write_text(_json.dumps(pkg, indent=2))
-                # Sync to DB
                 pkg_file_result = await db.execute(
                     select(ProjectFile).where(
                         ProjectFile.project_id == project_uuid,
@@ -102,9 +105,9 @@ async def run_pipeline(task_id: str, project_id: str, prompt: str, db: AsyncSess
                     ))
                 await db.commit()
 
-            log = _log_step(log, "provision_db", "done", "Database ready")
+            log = _log_step(log, "provision_db", "done", f"Database ready: {database_url.split('@')[1]}")
         except Exception as db_exc:
-            log = _log_step(log, "provision_db", "error", f"DB provision failed (continuing): {db_exc}")
+            log = _log_step(log, "provision_db", "error", f"DB provision failed: {db_exc}")
         await _save_log(db, task, log)
 
         # Step 3a — Get existing files
@@ -137,18 +140,22 @@ async def run_pipeline(task_id: str, project_id: str, prompt: str, db: AsyncSess
         log = _log_step(log, "plan", "running", "Creating implementation plan")
         await _save_log(db, task, log)
 
-        plan_result = await plan(prompt, analysis, file_contexts)
+        # Build db_context BEFORE planning so the planner knows to include API routes.
+        # Use "No tables yet." as the schema — the schema agent fills it in after codegen.
+        # This always succeeds because build_db_context only needs the project_id for the URL.
+        try:
+            _pre_schema = await get_schema_info(project_id)
+        except Exception:
+            _pre_schema = "No tables yet."
+        db_ctx = build_db_context(project_id, _pre_schema)
+
+        plan_result = await plan(prompt, analysis, file_contexts, db_ctx)
         tasks = plan_result.get("tasks", [])
 
         log = _log_step(log, "plan", "done", f"Planned {len(tasks)} file operations")
         await _save_log(db, task, log)
 
         # Step 6 — Code generation
-        # Build db_context once before the loop so all files get the same schema snapshot
-        try:
-            db_ctx = build_db_context(project_id)
-        except Exception:
-            db_ctx = None
 
         for i, file_task in enumerate(tasks):
             file_path = file_task["file"]
@@ -171,9 +178,12 @@ async def run_pipeline(task_id: str, project_id: str, prompt: str, db: AsyncSess
                 current_content = file_contexts.get(file_path)
                 content = await generate_file(description, file_path, current_content, arch_summary, db_ctx)
 
-                # Pre-flight: strip TypeScript from .js/.jsx files before writing to disk
+                # Pre-flight: strip TypeScript from .js/.jsx files
                 if file_path.endswith((".js", ".jsx")) and has_typescript(content):
                     content = await strip_typescript(content, file_path)
+                # Pre-flight: convert module.exports → export default in API routes
+                if is_api_route(file_path) and has_cjs_exports(content):
+                    content = fix_cjs_exports(content)
 
                 dest = project_dir / file_path
                 dest.parent.mkdir(parents=True, exist_ok=True)
@@ -249,15 +259,60 @@ async def run_pipeline(task_id: str, project_id: str, prompt: str, db: AsyncSess
                 for f in all_src_result.scalars().all()
                 if not f.file_path.startswith("_meta/")
             }
-            current_schema = get_schema_info(project_id)
+            current_schema = await get_schema_info(project_id)
             schema_plan = await plan_db_schema(prompt, src_files, current_schema)
 
             if schema_plan.get("needs_db") and schema_plan.get("schema_sql", "").strip():
-                ok, output = apply_schema(project_id, schema_plan["schema_sql"])
+                ok, output = await apply_schema(project_id, schema_plan["schema_sql"])
                 detail = schema_plan.get("description", "Schema applied")
                 if not ok:
                     detail = f"Schema warning: {output[:200]}"
                 log = _log_step(log, "schema", "done", detail)
+
+                # Step 7b-ii — Wire DB: generate API routes + update page to use fetch()
+                log = _log_step(log, "db_wiring", "running", "Generating database API routes...")
+                await _save_log(db, task, log)
+                try:
+                    page_files = {
+                        f.file_path: f.content
+                        for f in all_src_result.scalars().all()
+                        if f.file_path.startswith("pages/") and not f.file_path.startswith("pages/api/")
+                        and not f.file_path.startswith("_meta/")
+                    }
+                    wired_files = await generate_api_routes(
+                        prompt, schema_plan["schema_sql"], page_files
+                    )
+                    for file_path, content in wired_files.items():
+                        # Strip TypeScript if needed
+                        if file_path.endswith((".js", ".jsx")) and has_typescript(content):
+                            content = await strip_typescript(content, file_path)
+                        if is_api_route(file_path) and has_cjs_exports(content):
+                            content = fix_cjs_exports(content)
+                        dest = project_dir / file_path
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        dest.write_text(content)
+                        wire_res = await db.execute(
+                            select(ProjectFile).where(
+                                ProjectFile.project_id == project_uuid,
+                                ProjectFile.file_path == file_path,
+                            )
+                        )
+                        wf = wire_res.scalar_one_or_none()
+                        if wf:
+                            wf.content = content
+                            wf.updated_at = _now()
+                        else:
+                            db.add(ProjectFile(
+                                id=uuid.uuid4(),
+                                project_id=project_uuid,
+                                file_path=file_path,
+                                content=content,
+                            ))
+                    await db.commit()
+                    log = _log_step(log, "db_wiring", "done", f"Wired {len(wired_files)} file(s) to database")
+                except Exception as wire_exc:
+                    log = _log_step(log, "db_wiring", "error", f"DB wiring failed: {wire_exc}")
+                await _save_log(db, task, log)
             else:
                 log = _log_step(log, "schema", "done", "No schema changes needed")
         except Exception as schema_exc:

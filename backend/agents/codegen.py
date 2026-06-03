@@ -10,7 +10,7 @@ SYSTEM = """You are a senior Next.js + Tailwind CSS engineer.
 Write production-quality code. Use functional React components. Use Tailwind for styling.
 STRICT RULES:
 - FILE EXTENSION MATTERS: For .js and .jsx files write PLAIN JAVASCRIPT — no TypeScript type annotations, no interface/type imports, no generics, no ': SomeType' anywhere. For .ts and .tsx files TypeScript is fine.
-- DATABASE: If a DATABASE CONTEXT is provided, you MUST use pg Pool for all data that needs to persist. Write /pages/api/*.js routes that query the database. Use 'const pool = new Pool({ connectionString: process.env.DATABASE_URL })' at the top of each API file that needs DB access. Always include 'CREATE TABLE IF NOT EXISTS ...' at the start of POST/mutation handlers so tables are auto-created.
+- DATABASE: If a DATABASE CONTEXT is provided, you MUST use pg Pool for all persistent data. Write /pages/api/*.js routes using ONLY ESM syntax: `import { Pool } from 'pg'` + `export default async function handler(req, res)`. NEVER use `module.exports` or `require()` — Next.js 14 API routes require `export default`. Always run CREATE TABLE IF NOT EXISTS first.
 - Only use built-in Tailwind CSS utility classes. NEVER invent custom class names.
 - When you import a new npm package, also update package.json to include it.
 Return ONLY the complete file content — no markdown fences, no explanation, no comments."""
@@ -74,6 +74,7 @@ async def fix_errors(error_log: str, file_contents: dict[str, str]) -> dict[str,
                     "STRICT RULES:\n"
                     "- TYPESCRIPT IN .JS FILE ('Expected \\',\\', got \\':'\\'', 'Expected expression', 'Unexpected token'): The file is .js/.jsx but contains TypeScript syntax. Rewrite the ENTIRE file in plain JavaScript — remove all type annotations (': SomeType', 'as SomeType'), remove all interface/type declarations, remove all TypeScript-only imports (e.g. 'import { AppProps } from \\'next/app\\''), remove all generic type parameters. Keep all logic identical.\n"
                     "- TAILWIND 'class does not exist' errors: Replace every custom/invented Tailwind class with the correct standard Tailwind equivalent.\n"
+                    "- 'does not export a default function' (API route error): Next.js 14 requires `export default`, not `module.exports`. Rewrite the ENTIRE file using ESM: `import { Pool } from 'pg'` and `export default async function handler(req, res)`. Replace ALL `require()` with `import` and ALL `module.exports` with `export default`.\n"
                     "- MISSING MODULE errors: Rewrite to avoid the package. For Google Maps use next/script + window.google.maps.\n"
                     "- NEVER nest <a> inside <Link>. In Next.js 13+, <Link href='...'> is already an anchor.\n"
                     "- Fix hydration errors by making server and client render identical HTML.\n"
@@ -106,6 +107,40 @@ _TS_PATTERNS = [
     re.compile(r':\s*(string|number|boolean|void|never|any|unknown)\b'),  # : string
     re.compile(r'<[A-Z][a-zA-Z]+>(?!\s*[\w<])'),     # generic <T> (not JSX)
 ]
+
+
+def is_api_route(file_path: str) -> bool:
+    return file_path.startswith("pages/api/") and file_path.endswith((".js", ".jsx"))
+
+
+def fix_cjs_exports(content: str) -> str:
+    """Convert CommonJS require/module.exports to ESM in API route files.
+
+    Next.js 14 requires `export default` — `module.exports` always fails.
+    This is deterministic and runs before writing the file to disk.
+    """
+    # require('pkg') or require("pkg")  →  import ... from 'pkg'
+    content = re.sub(
+        r"const\s*\{\s*([^}]+)\}\s*=\s*require\(['\"]([^'\"]+)['\"]\);",
+        lambda m: f"import {{ {m.group(1).strip()} }} from '{m.group(2)}';",
+        content,
+    )
+    content = re.sub(
+        r"const\s+(\w+)\s*=\s*require\(['\"]([^'\"]+)['\"]\);",
+        lambda m: f"import {m.group(1)} from '{m.group(2)}';",
+        content,
+    )
+    # module.exports = async (...) => {  or  module.exports = async function handler(...) {
+    content = re.sub(
+        r"module\.exports\s*=\s*async\s*(?:function\s*(?:\w+)?\s*)?\(\s*req\s*,\s*res\s*\)\s*(?:=>)?\s*\{",
+        "export default async function handler(req, res) {",
+        content,
+    )
+    return content
+
+
+def has_cjs_exports(content: str) -> bool:
+    return "module.exports" in content or "require(" in content
 
 
 def has_typescript(content: str) -> bool:
