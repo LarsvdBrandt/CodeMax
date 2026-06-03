@@ -1,165 +1,183 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { listProjects, deleteProject, ApiError, type Project } from "@/lib/api";
+import { listProjects, deleteProject, getMe, ApiError, type Project, type UserProfile } from "@/lib/api";
 
-const STATUS_COLORS: Record<string, string> = {
-  idle: "bg-gray-600",
+const STATUS_DOT: Record<string, string> = {
+  idle:     "bg-[#2a2a2a]",
   building: "bg-yellow-500 animate-pulse",
-  ready: "bg-green-500",
-  error: "bg-red-500",
+  ready:    "bg-green-500",
+  error:    "bg-red-500",
 };
+
+function timeAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h`;
+  return `${Math.floor(h / 24)}d`;
+}
+
+function projInitials(name: string): string {
+  return name.split(/\s+/).map(w => w[0] ?? "").join("").slice(0, 2).toUpperCase() || "?";
+}
+
+function userInitials(u: UserProfile | null): string {
+  if (u?.full_name) return u.full_name.split(/\s+/).map(w => w[0]).join("").slice(0, 2).toUpperCase();
+  return u?.email?.[0].toUpperCase() ?? "?";
+}
 
 export default function DashboardPage() {
   const router = useRouter();
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [deleting, setDeleting] = useState<string | null>(null);
-  const [menuOpen, setMenuOpen] = useState<string | null>(null);
+  const [projects, setProjects]   = useState<Project[]>([]);
+  const [user,     setUser]       = useState<UserProfile | null>(null);
+  const [loading,  setLoading]    = useState(true);
+  const [query,    setQuery]      = useState("");
+  const [menuOpen, setMenuOpen]   = useState<string | null>(null);
+  const [deleting, setDeleting]   = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!localStorage.getItem("token")) {
-      router.replace("/login");
-      return;
-    }
-    fetchProjects();
+    if (!localStorage.getItem("token")) { router.replace("/login"); return; }
+    Promise.all([
+      listProjects().catch(() => [] as Project[]),
+      getMe().catch(() => null),
+    ]).then(([ps, u]) => { setProjects(ps); setUser(u); }).finally(() => setLoading(false));
   }, [router]);
 
-  async function fetchProjects() {
-    try {
-      const data = await listProjects();
-      setProjects(data);
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 401) {
-        router.replace("/login");
-      }
-      // non-401 errors: stay on the page, projects just won't load
-    } finally {
-      setLoading(false);
+  // Close menu on outside click
+  useEffect(() => {
+    function handle(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(null);
     }
-  }
+    document.addEventListener("mousedown", handle);
+    return () => document.removeEventListener("mousedown", handle);
+  }, []);
 
-
-  function handleLogout() {
-    localStorage.removeItem("token");
-    router.push("/login");
-  }
-
-  async function handleDelete(projectId: string) {
+  async function handleDelete(projectId: string, e: React.MouseEvent) {
+    e.preventDefault(); e.stopPropagation();
     if (!confirm("Delete this project? This cannot be undone.")) return;
-    setDeleting(projectId);
-    try {
-      await deleteProject(projectId);
-      setProjects(ps => ps.filter(p => p.id !== projectId));
-      setMenuOpen(null);
-    } catch (err) {
-      console.error("Delete failed", err);
-    } finally {
-      setDeleting(null);
-    }
+    setDeleting(projectId); setMenuOpen(null);
+    try { await deleteProject(projectId); setProjects(ps => ps.filter(p => p.id !== projectId)); }
+    catch (err) { if (err instanceof ApiError && err.status === 401) router.replace("/login"); }
+    finally { setDeleting(null); }
   }
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p className="text-[#888]">Loading...</p>
-      </div>
-    );
-  }
+  const filtered = projects.filter(p =>
+    p.name.toLowerCase().includes(query.toLowerCase()) ||
+    p.description.toLowerCase().includes(query.toLowerCase())
+  );
+
+  if (loading) return (
+    <div className="h-screen flex items-center justify-center bg-black">
+      <div className="w-5 h-5 border-2 border-[#222] border-t-[#555] rounded-full"
+        style={{ animation: "spin 0.8s linear infinite" }} />
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
 
   return (
-    <div className="min-h-screen">
-      <header className="border-b border-[#222] px-6 py-4 flex items-center justify-between">
-        <h1 className="text-lg font-semibold">CodeMax</h1>
-        <div className="flex items-center gap-3">
-          <Link
-            href="/welcome"
-            className="bg-white hover:bg-gray-100 text-black text-sm rounded-[10px] px-4 py-2 transition-colors inline-block"
-          >
-            New project
-          </Link>
-          <button
-            onClick={handleLogout}
-            className="text-[#888] hover:text-white text-sm transition-colors"
-          >
-            Logout
-          </button>
-        </div>
-      </header>
+    <div className="h-screen bg-black text-white flex flex-col overflow-hidden">
 
-      <main className="max-w-5xl mx-auto px-6 py-10">
-        {projects.length === 0 ? (
-          <div className="text-center py-24">
-            <p className="text-[#555] text-lg mb-4">No projects yet</p>
-            <Link
-              href="/welcome"
-              className="bg-white hover:bg-gray-100 text-black text-sm rounded-[10px] px-6 py-2.5 transition-colors inline-block"
-            >
-              Build your first app
+      {/* User icon — top right */}
+      <div className="absolute top-4 right-4 z-10">
+        <Link href="/settings"
+          className="w-9 h-9 rounded-full bg-[#111] border border-[#222] hover:border-[#444] flex items-center justify-center text-xs font-semibold text-white transition-colors">
+          {userInitials(user)}
+        </Link>
+      </div>
+
+      {/* Center content */}
+      <div className="flex-1 flex flex-col items-center justify-center px-4">
+        <div className="w-full max-w-[520px] space-y-2">
+
+          {/* Search bar */}
+          <div className="flex items-center gap-2 bg-[#0d0d0d] border border-[#222] rounded-[15px] px-4 h-12">
+            <svg className="w-4 h-4 text-[#333] flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              value={query} onChange={e => setQuery(e.target.value)}
+              placeholder="Search projects..."
+              className="flex-1 bg-transparent text-sm text-white placeholder-[#2e2e2e] focus:outline-none"
+            />
+            <Link href="/welcome"
+              className="w-7 h-7 rounded-full bg-[#1a1a1a] hover:bg-[#252525] border border-[#2a2a2a] flex items-center justify-center text-[#666] hover:text-white transition-colors flex-shrink-0"
+              title="New project">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
             </Link>
           </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {projects.map((p) => (
-              <div
-                key={p.id}
-                className="relative group"
-              >
-                <Link
-                  href={`/project/${p.id}`}
-                  className="block bg-[#111] border border-[#222] rounded-[15px] p-5 hover:border-white/40 transition-colors"
-                >
-                  <div className="flex items-start justify-between mb-3">
-                    <h2 className="font-medium group-hover:text-white transition-colors">{p.name}</h2>
-                    <span
-                      className={`mt-1 w-2.5 h-2.5 rounded-full flex-shrink-0 ${STATUS_COLORS[p.status] ?? "bg-gray-600"}`}
-                      title={p.status}
-                    />
-                  </div>
-                  <p className="text-sm text-[#888] line-clamp-2">{p.description}</p>
-                  <p className="text-xs text-[#444] mt-4">
-                    {new Date(p.updated_at).toLocaleDateString()}
-                  </p>
-                </Link>
 
-                {/* Delete button */}
-                <button
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setMenuOpen(menuOpen === p.id ? null : p.id);
-                  }}
-                  className="absolute top-3 right-3 text-[#444] hover:text-white opacity-0 group-hover:opacity-100 transition-all p-1 rounded-[6px] hover:bg-[#1a1a1a]"
-                  title="Delete project"
-                >
-                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                    <circle cx="12" cy="5" r="1" />
-                    <circle cx="12" cy="12" r="1" />
-                    <circle cx="12" cy="19" r="1" />
-                  </svg>
-                </button>
+          {/* Projects list */}
+          {filtered.length > 0 && (
+            <div className="bg-[#0d0d0d] border border-[#222] rounded-[15px] overflow-hidden">
+              {filtered.map((p, i) => (
+                <div key={p.id} className="relative group">
+                  <Link href={`/project/${p.id}`}
+                    className={`flex items-center gap-3.5 px-4 py-3.5 hover:bg-[#111] transition-colors ${i !== 0 ? "border-t border-[#1a1a1a]" : ""}`}>
 
-                {/* Dropdown menu */}
-                {menuOpen === p.id && (
-                  <div className="absolute top-10 right-0 bg-[#1a1a1a] border border-[#2a2a2a] rounded-[10px] shadow-xl z-10 overflow-hidden min-w-[140px]">
-                    <button
-                      onClick={(e) => {
-                        e.preventDefault();
-                        handleDelete(p.id);
-                      }}
-                      disabled={deleting === p.id}
-                      className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
-                    >
-                      {deleting === p.id ? "Deleting..." : "Delete"}
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </main>
+                    {/* Avatar */}
+                    <div className="w-9 h-9 rounded-full bg-[#1a1a1a] border border-[#2a2a2a] flex items-center justify-center text-[11px] font-semibold text-white flex-shrink-0">
+                      {projInitials(p.name)}
+                    </div>
 
+                    {/* Text */}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-white truncate leading-tight">{p.name}</p>
+                      <p className="text-xs text-[#444] truncate mt-0.5 leading-tight">{p.description}</p>
+                    </div>
+
+                    {/* Right: time + status */}
+                    <div className="flex flex-col items-end gap-1.5 flex-shrink-0 ml-2">
+                      <span className="text-[11px] text-[#333]">{timeAgo(p.updated_at)}</span>
+                      <div className={`w-4 h-4 rounded-full border-2 border-[#1a1a1a] ${STATUS_DOT[p.status] ?? "bg-[#2a2a2a]"}`} />
+                    </div>
+                  </Link>
+
+                  {/* Ellipsis menu */}
+                  <button
+                    onClick={e => { e.preventDefault(); setMenuOpen(menuOpen === p.id ? null : p.id); }}
+                    className="absolute right-12 top-1/2 -translate-y-1/2 p-1.5 text-[#2a2a2a] hover:text-[#777] opacity-0 group-hover:opacity-100 transition-all rounded-[6px] hover:bg-[#1a1a1a]"
+                  >
+                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                      <circle cx="5" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="19" cy="12" r="1.5" />
+                    </svg>
+                  </button>
+
+                  {menuOpen === p.id && (
+                    <div ref={menuRef}
+                      className="absolute right-10 top-1/2 -translate-y-1/2 bg-[#111] border border-[#222] rounded-[10px] z-20 overflow-hidden min-w-[120px] shadow-xl">
+                      <button onClick={e => handleDelete(p.id, e)} disabled={deleting === p.id}
+                        className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50">
+                        {deleting === p.id ? "Deleting..." : "Delete"}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Empty states */}
+          {!loading && filtered.length === 0 && query && (
+            <p className="text-center text-sm text-[#333] pt-4">No projects match &ldquo;{query}&rdquo;</p>
+          )}
+          {!loading && projects.length === 0 && (
+            <div className="text-center pt-6 space-y-3">
+              <p className="text-[#333] text-sm">No projects yet</p>
+              <Link href="/welcome"
+                className="inline-block bg-white hover:bg-gray-100 text-black text-sm font-medium px-5 py-2 rounded-[10px] transition-colors">
+                Build your first app
+              </Link>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
