@@ -1,0 +1,80 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   GLOBAL STYLES
+   Injects CSS custom properties from src/config/theme.ts via Tailwind.
+   To change the colour scheme, edit theme.ts — not this file.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* ── Colour tokens (R G B triples, no commas) ──────────────────────────── */
+    --color-primary:    255 255 255;
+    --color-secondary:  161 161 170;
+    --color-accent:     99 102 241;
+
+    --color-background: 9 9 11;
+    --color-surface:    18 18 20;
+    --color-surface-2:  27 27 30;
+
+    --color-border:     39 39 42;
+    --color-muted:      113 113 122;
+    --color-foreground: 250 250 250;
+
+    --color-error:      239 68 68;
+    --color-success:    34 197 94;
+
+    /* ── Shape & shadow tokens ──────────────────────────────────────────────── */
+    --radius:         0.5rem;
+    --radius-lg:      1rem;
+    --shadow-card:    0 1px 3px 0 rgb(0 0 0 / 0.4), 0 1px 2px -1px rgb(0 0 0 / 0.4);
+    --shadow-float:   0 8px 32px 0 rgb(0 0 0 / 0.6);
+  }
+
+  /* Sensible resets */
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html {
+    scroll-behavior: smooth;
+    /* Prevents layout shift when a scrollbar appears */
+    scrollbar-gutter: stable;
+  }
+
+  body {
+    @apply bg-background text-foreground font-sans antialiased;
+    line-height: 1.6;
+  }
+
+  /* Scrollbar styling (webkit) */
+  ::-webkit-scrollbar        { width: 6px; }
+  ::-webkit-scrollbar-track  { @apply bg-background; }
+  ::-webkit-scrollbar-thumb  { @apply bg-border rounded-full; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-muted; }
+
+  /* Focus ring — visible only for keyboard navigation */
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-background;
+  }
+}
+
+@layer components {
+  /* ── Gradient text utility ────────────────────────────────────────────── */
+  .gradient-text {
+    @apply bg-gradient-to-r from-white via-white to-accent bg-clip-text text-transparent;
+  }
+
+  /* ── Glass-morphism card ─────────────────────────────────────────────── */
+  .glass {
+    background: rgb(var(--color-surface) / 0.7);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgb(var(--color-border) / 0.6);
+  }
+
+  /* ── Section padding shorthand ───────────────────────────────────────── */
+  .section {
+    @apply py-24 px-6;
+  }
+}
