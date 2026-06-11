@@ -33,17 +33,21 @@ services:
 
   backend:
     build:
-      context: ./backend
+      context: ./backend-java
       dockerfile: Dockerfile
     platform: linux/arm64
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://codemax:codemax@postgres:5432/codemax
-      RABBITMQ_URL: amqp://codemax:codemax@rabbitmq:5672/
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/codemax
+      SPRING_DATASOURCE_USERNAME: codemax
+      SPRING_DATASOURCE_PASSWORD: codemax
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: codemax
+      SPRING_RABBITMQ_PASSWORD: codemax
       PROJECTS_DIR: /projects
       TEMPLATES_DIR: /templates
     volumes:
-      - ./backend:/app
       - codemax_projects:/projects
       - ./templates:/templates
       - /var/run/docker.sock:/var/run/docker.sock
@@ -54,31 +58,34 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
-    command: sh start.sh
 
-  worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    platform: linux/arm64
-    env_file: .env
-    environment:
-      DATABASE_URL: postgresql+asyncpg://codemax:codemax@postgres:5432/codemax
-      RABBITMQ_URL: amqp://codemax:codemax@rabbitmq:5672/
-      PROJECTS_DIR: /projects
-      TEMPLATES_DIR: /templates
-    volumes:
-      - ./backend:/app
-      - codemax_projects:/projects
-      - ./templates:/templates
-      - ./nginx/conf.d:/etc/nginx/conf.d
-      - /var/run/docker.sock:/var/run/docker.sock
-    depends_on:
-      postgres:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-    command: python worker.py
+  # worker: Java worker — not yet implemented. Uncomment when ready.
+  # worker:
+  #   build:
+  #     context: ./backend-java
+  #     dockerfile: Dockerfile
+  #   platform: linux/arm64
+  #   env_file: .env
+  #   environment:
+  #     SPRING_PROFILES_ACTIVE: worker
+  #     SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/codemax
+  #     SPRING_DATASOURCE_USERNAME: codemax
+  #     SPRING_DATASOURCE_PASSWORD: codemax
+  #     SPRING_RABBITMQ_HOST: rabbitmq
+  #     SPRING_RABBITMQ_PORT: 5672
+  #     SPRING_RABBITMQ_USERNAME: codemax
+  #     SPRING_RABBITMQ_PASSWORD: codemax
+  #     PROJECTS_DIR: /projects
+  #     TEMPLATES_DIR: /templates
+  #   volumes:
+  #     - codemax_projects:/projects
+  #     - ./templates:/templates
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     rabbitmq:
+  #       condition: service_healthy
 
   frontend:
     build:

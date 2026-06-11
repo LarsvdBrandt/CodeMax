@@ -1,0 +1,52 @@
+spring:
+  application:
+    name: codemax
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/codemax}
+    username: ${SPRING_DATASOURCE_USERNAME:codemax}
+    password: ${SPRING_DATASOURCE_PASSWORD:codemax}
+    driver-class-name: org.postgresql.Driver
+
+  jpa:
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: false
+    open-in-view: false
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: false
+
+  rabbitmq:
+    host: ${SPRING_RABBITMQ_HOST:localhost}
+    port: ${SPRING_RABBITMQ_PORT:5672}
+    username: ${SPRING_RABBITMQ_USERNAME:codemax}
+    password: ${SPRING_RABBITMQ_PASSWORD:codemax}
+
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    serialization:
+      write-dates-as-timestamps: false
+
+server:
+  port: ${SERVER_PORT:8000}
+
+codemax:
+  jwt-secret: ${JWT_SECRET:change-me-in-production-must-be-at-least-32-chars}
+  jwt-expiration-ms: 604800000
+  projects-dir: ${PROJECTS_DIR:/projects}
+  templates-dir: ${TEMPLATES_DIR:/templates}
+  openai-api-key: ${OPENAI_API_KEY:}
+  cors-allow-origins: ${CORS_ALLOW_ORIGINS:http://localhost:3000}
+
+logging:
+  level:
+    root: WARN
+    com.reuzenpanda.codemax: INFO
+    org.flywaydb: INFO
+    org.springframework.security: WARN
