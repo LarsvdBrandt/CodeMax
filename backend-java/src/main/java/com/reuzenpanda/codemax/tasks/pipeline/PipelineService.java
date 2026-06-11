@@ -73,13 +73,14 @@ public class PipelineService {
             markRunning(task, project, prompt);
             Path projectDir = Path.of(props.getProjectsDir(), projectId.toString());
             int port = docker.findFreePort();
+            Map<String, String> answers = project.getAnswers() != null ? project.getAnswers() : Map.of();
 
             pipeLog(task, "seed_template", "running", "Seeding project template");
             seedTemplate(projectDir);
             pipeLog(task, "seed_template", "done", "Template copied");
 
             pipeLog(task, "env_vars", "running", "Configuring environment");
-            injectEnvVars(projectDir, projectId, port);
+            injectEnvVars(projectDir, projectId, port, answers);
             pipeLog(task, "env_vars", "done", "Environment configured");
 
             applyViteProxy(projectDir);
@@ -88,15 +89,15 @@ public class PipelineService {
             String componentsCtx = loadFile(projectDir, "COMPONENTS.md");
 
             pipeLog(task, "analyze", "running", "Analyzing your request");
-            TemplateAnalysis analysis = analyzePrompt(aiContext, prompt);
+            TemplateAnalysis analysis = analyzePrompt(aiContext, prompt, answers);
             pipeLog(task, "analyze", "done", "Feature: " + analysis.featureName());
 
             pipeLog(task, "backend_model", "running", "Generating " + analysis.featureName() + " model");
-            generateBackendModel(projectDir, aiContext, analysis);
+            generateBackendModel(projectDir, aiContext, analysis, answers);
             pipeLog(task, "backend_model", "done", "Model generated");
 
             pipeLog(task, "backend_routes", "running", "Generating API routes");
-            generateBackendRoutes(projectDir, aiContext, analysis);
+            generateBackendRoutes(projectDir, aiContext, analysis, answers);
             pipeLog(task, "backend_routes", "done", "Routes generated");
 
             pipeLog(task, "route_index", "running", "Wiring routes");
@@ -104,11 +105,11 @@ public class PipelineService {
             pipeLog(task, "route_index", "done", "Routes mounted");
 
             pipeLog(task, "frontend_types", "running", "Generating TypeScript types and service");
-            generateFrontendTypesAndService(projectDir, aiContext, analysis);
+            generateFrontendTypesAndService(projectDir, aiContext, analysis, answers);
             pipeLog(task, "frontend_types", "done", "Types and service ready");
 
             pipeLog(task, "frontend_page", "running", "Building " + analysis.featureName() + " page");
-            generateFeaturePage(projectDir, aiContext, componentsCtx, analysis);
+            generateFeaturePage(projectDir, aiContext, componentsCtx, analysis, answers);
             pipeLog(task, "frontend_page", "done", "Page generated");
 
             pipeLog(task, "routing", "running", "Updating navigation");
@@ -116,7 +117,7 @@ public class PipelineService {
             pipeLog(task, "routing", "done", "Navigation updated");
 
             pipeLog(task, "branding", "running", "Applying branding");
-            updateBranding(projectDir, aiContext, analysis);
+            updateBranding(projectDir, aiContext, analysis, answers);
             pipeLog(task, "branding", "done", "Branding applied");
 
             pipeLog(task, "build", "running", "Starting preview container");
@@ -194,15 +195,17 @@ public class PipelineService {
 
     // ── Step 2: Inject env vars ───────────────────────────────────────────────
 
-    private void injectEnvVars(Path projectDir, UUID projectId, int port) throws IOException {
+    private void injectEnvVars(Path projectDir, UUID projectId, int port,
+                                Map<String, String> answers) throws IOException {
         String dbName = "proj_" + projectId.toString().replace("-", "_");
         String mongoUri = props.getMongoRootUrl() + "/" + dbName + "?authSource=admin";
         String jwtSecret = generateSecret();
         String appUrl = "http://localhost:" + port;
+        String appName = answers.getOrDefault("business_name", "My App");
 
         Map<String, String> frontendEnv = new LinkedHashMap<>();
         frontendEnv.put("VITE_API_BASE_URL", "");
-        frontendEnv.put("VITE_APP_NAME", "My App");
+        frontendEnv.put("VITE_APP_NAME", appName);
         frontendEnv.put("VITE_GOOGLE_CLIENT_ID", "");
         frontendEnv.put("APP_URL", appUrl);
         frontendEnv.put("NODE_ENV", "development");
@@ -260,7 +263,14 @@ public class PipelineService {
     // ── Step 4: Analyze ───────────────────────────────────────────────────────
 
     @SuppressWarnings("unchecked")
-    private TemplateAnalysis analyzePrompt(String aiContext, String prompt) {
+    private TemplateAnalysis analyzePrompt(String aiContext, String prompt,
+                                            Map<String, String> answers) {
+        String userColor  = answers.getOrDefault("primary_color", "");
+        String userTone   = answers.getOrDefault("tone", "");
+        String userAudience = answers.getOrDefault("audience", "");
+        String userTagline  = answers.getOrDefault("tagline", "");
+        String brandCtx   = brandingContext(answers);
+
         String sys = systemPrompt(aiContext, "") + """
 
             Analyze the user's request and return JSON:
@@ -276,18 +286,25 @@ public class PipelineService {
               "features_list": [{"icon": "Zap", "title": "...", "description": "..."}]
             }
             feature_name: PascalCase singular. feature_plural: lowercase plural.
-            accent_color_rgb: RGB triple without commas, e.g. "20 184 166". Match the app mood.
+            accent_color_rgb: RGB triple without commas — MUST match the brand color if provided.
+            app_tagline / hero_headline / hero_subheadline: use the user's tagline as the primary source.
             icon: valid lucide-react icon name.
+            Generate compelling copy for ALL text fields — tone must match the specified app vibe.
             """;
+        String enrichedPrompt = brandCtx.isBlank() ? prompt
+            : prompt + "\n\n---\nBranding context:\n" + brandCtx;
         try {
-            Map<String, Object> r = objectMapper.readValue(ai.chatJson(sys, prompt), Map.class);
+            Map<String, Object> r = objectMapper.readValue(ai.chatJson(sys, enrichedPrompt), Map.class);
+            // User-specified values always win over AI-generated ones
+            String color = userColor.isBlank() ? str(r, "accent_color_rgb", "99 102 241") : userColor;
+            String tagline = userTagline.isBlank() ? str(r, "app_tagline", "") : userTagline;
             return new TemplateAnalysis(
                 str(r, "feature_name", "Item"),
                 str(r, "feature_plural", "items"),
                 str(r, "feature_route", "/dashboard"),
                 (List<Map<String, Object>>) r.getOrDefault("fields", List.of()),
-                str(r, "accent_color_rgb", "99 102 241"),
-                str(r, "app_tagline", ""),
+                color,
+                tagline,
                 str(r, "hero_headline", ""),
                 str(r, "hero_subheadline", ""),
                 (List<Map<String, String>>) r.getOrDefault("features_list", List.of())
@@ -295,14 +312,15 @@ public class PipelineService {
         } catch (Exception e) {
             log.warn("Analysis parse failed: {}", e.getMessage());
             return new TemplateAnalysis("Item", "items", "/dashboard",
-                List.of(), "99 102 241", "", "", "", List.of());
+                List.of(), userColor.isBlank() ? "99 102 241" : userColor,
+                userTagline, "", "", List.of());
         }
     }
 
     // ── Step 5: Backend Mongoose model ────────────────────────────────────────
 
     private void generateBackendModel(Path projectDir, String aiContext,
-                                       TemplateAnalysis a) throws IOException {
+                                       TemplateAnalysis a, Map<String, String> answers) throws IOException {
         String todoRef = loadFile(projectDir, "server/src/models/Todo.ts");
         String sys = systemPrompt(aiContext, "") + """
 
@@ -322,7 +340,7 @@ public class PipelineService {
     // ── Step 6: Backend Express routes ───────────────────────────────────────
 
     private void generateBackendRoutes(Path projectDir, String aiContext,
-                                        TemplateAnalysis a) throws IOException {
+                                        TemplateAnalysis a, Map<String, String> answers) throws IOException {
         String todoRef = loadFile(projectDir, "server/src/routes/todos.ts");
         String sys = systemPrompt(aiContext, "") + """
 
@@ -356,7 +374,7 @@ public class PipelineService {
     // ── Step 8: Frontend types + api config + service ─────────────────────────
 
     private void generateFrontendTypesAndService(Path projectDir, String aiContext,
-                                                   TemplateAnalysis a) throws IOException {
+                                                   TemplateAnalysis a, Map<String, String> answers) throws IOException {
         // types/index.ts
         String curTypes = loadFile(projectDir, "src/types/index.ts");
         String typesSys = systemPrompt(aiContext, "") + """
@@ -401,7 +419,7 @@ public class PipelineService {
     // ── Step 9: Feature page ──────────────────────────────────────────────────
 
     private void generateFeaturePage(Path projectDir, String aiContext, String componentsCtx,
-                                      TemplateAnalysis a) throws IOException {
+                                      TemplateAnalysis a, Map<String, String> answers) throws IOException {
         String dashRef = loadFile(projectDir, "src/pages/Dashboard.tsx");
         String sys = systemPrompt(aiContext, componentsCtx) + """
 
@@ -448,7 +466,8 @@ public class PipelineService {
 
     // ── Step 11: Branding ─────────────────────────────────────────────────────
 
-    private void updateBranding(Path projectDir, String aiContext, TemplateAnalysis a) throws IOException {
+    private void updateBranding(Path projectDir, String aiContext, TemplateAnalysis a,
+                                 Map<String, String> answers) throws IOException {
         if (!a.accentColorRgb().isBlank()) {
             String theme = loadFile(projectDir, "src/config/theme.ts");
             if (!theme.isBlank()) {
@@ -534,6 +553,22 @@ public class PipelineService {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private String brandingContext(Map<String, String> answers) {
+        if (answers == null || answers.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        if (!answers.getOrDefault("business_name", "").isBlank())
+            sb.append("Business/App name: ").append(answers.get("business_name")).append("\n");
+        if (!answers.getOrDefault("tone", "").isBlank())
+            sb.append("App vibe/tone: ").append(answers.get("tone")).append("\n");
+        if (!answers.getOrDefault("audience", "").isBlank())
+            sb.append("Target audience: ").append(answers.get("audience")).append("\n");
+        if (!answers.getOrDefault("tagline", "").isBlank())
+            sb.append("Tagline: ").append(answers.get("tagline")).append("\n");
+        if (!answers.getOrDefault("primary_color", "").isBlank())
+            sb.append("Brand color (RGB): ").append(answers.get("primary_color")).append("\n");
+        return sb.toString().trim();
+    }
 
     private String systemPrompt(String aiContext, String componentsCtx) {
         StringBuilder sb = new StringBuilder(

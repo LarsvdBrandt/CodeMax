@@ -91,10 +91,29 @@ export async function listProjects(): Promise<Project[]> {
   return request("/projects");
 }
 
-export async function createProject(name: string, description: string): Promise<{ task_id: string; project_id: string }> {
+export async function createProject(
+  name: string,
+  description: string,
+  answers?: Record<string, string>
+): Promise<{ task_id: string; project_id: string }> {
   return request("/projects", {
     method: "POST",
-    body: JSON.stringify({ name, description }),
+    body: JSON.stringify({ name, description, answers }),
+  });
+}
+
+export interface Question {
+  id: string;
+  type: "text" | "quick_menu" | "color_picker";
+  question: string;
+  placeholder?: string;
+  options?: { value: string; label: string; hex?: string }[];
+}
+
+export async function getProjectQuestions(description: string): Promise<{ questions: Question[] }> {
+  return request("/projects/questions", {
+    method: "POST",
+    body: JSON.stringify({ description }),
   });
 }
 

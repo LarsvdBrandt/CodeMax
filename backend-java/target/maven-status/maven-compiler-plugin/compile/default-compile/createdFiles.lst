@@ -25,6 +25,7 @@ com/reuzenpanda/codemax/projects/mappers/ProjectMapper.class
 com/reuzenpanda/codemax/common/config/CodeMaxProperties.class
 com/reuzenpanda/codemax/common/amqp/JobMessage.class
 com/reuzenpanda/codemax/projects/controllers/ProjectController$FileWriteRequest.class
+com/reuzenpanda/codemax/projects/controllers/ProjectController$QuestionsRequest.class
 com/reuzenpanda/codemax/common/exceptions/NotFoundException.class
 com/reuzenpanda/codemax/tasks/dtos/TaskDto.class
 com/reuzenpanda/codemax/tasks/listeners/TaskListener.class
