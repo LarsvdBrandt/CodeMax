@@ -14,4 +14,5 @@ public class CodeMaxProperties {
     private String templatesDir;
     private String openaiApiKey;
     private String corsAllowOrigins;
+    private String mongoRootUrl;
 }

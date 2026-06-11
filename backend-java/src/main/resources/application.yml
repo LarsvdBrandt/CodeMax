@@ -43,6 +43,7 @@ codemax:
   templates-dir: ${TEMPLATES_DIR:/templates}
   openai-api-key: ${OPENAI_API_KEY:}
   cors-allow-origins: ${CORS_ALLOW_ORIGINS:http://localhost:3000}
+  mongo-root-url: ${MONGO_ROOT_URL:mongodb://codemax:codemax@localhost:27017}
 
 logging:
   level:

@@ -1,6 +1,5 @@
 package com.reuzenpanda.codemax.tasks.pipeline;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.reuzenpanda.codemax.common.config.CodeMaxProperties;
 import com.reuzenpanda.codemax.common.docker.DockerService;
@@ -16,22 +15,25 @@ import com.reuzenpanda.codemax.tasks.entities.TaskStatus;
 import com.reuzenpanda.codemax.tasks.repositories.ITaskRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.Resource;
+import org.springframework.core.io.support.ResourcePatternResolver;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.sql.DriverManager;
+import java.security.SecureRandom;
+import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Slf4j
 @Service
@@ -45,8 +47,23 @@ public class PipelineService {
     private final DockerService docker;
     private final CodeMaxProperties props;
     private final ObjectMapper objectMapper;
+    private final ResourcePatternResolver resourceLoader;
 
     private static final int MAX_FIX_ROUNDS = 5;
+
+    record TemplateAnalysis(
+        String featureName,
+        String featurePlural,
+        String featureRoute,
+        List<Map<String, Object>> fields,
+        String accentColorRgb,
+        String appTagline,
+        String heroHeadline,
+        String heroSubheadline,
+        List<Map<String, String>> featuresList
+    ) {}
+
+    // ── Entry point ───────────────────────────────────────────────────────────
 
     public void runPipeline(UUID taskId, UUID projectId, String prompt) {
         Task task = taskRepo.findById(taskId).orElseThrow();
@@ -54,366 +71,539 @@ public class PipelineService {
 
         try {
             markRunning(task, project, prompt);
-
             Path projectDir = Path.of(props.getProjectsDir(), projectId.toString());
-
-            // Step 1 — Seed template
-            log(task, "seed_template", "running", "Seeding Next.js template");
-            seedTemplate(projectDir);
-            log(task, "seed_template", "done", "Template ready");
-
-            // Step 2 — Provision per-project database
-            log(task, "provision_db", "running", "Provisioning project database");
-            String dbUrl = provisionDb(projectId);
-            log(task, "provision_db", "done", "Database ready");
-
-            // Step 3 — Analyze
-            log(task, "analyze", "running", "Analyzing prompt");
-            List<String> existingFiles = getFileNames(projectId);
-            Map<String, Object> analysis = analyzePrompt(prompt, existingFiles);
-            log(task, "analyze", "done", "Change type: " + analysis.get("change_type"));
-
-            // Step 4 — Retrieve context
-            log(task, "retrieve", "running", "Retrieving file context");
-            Map<String, String> context = retrieveContext(projectId, analysis);
-            log(task, "retrieve", "done", context.size() + " files loaded");
-
-            // Step 5 — Plan
-            log(task, "plan", "running", "Planning file changes");
-            String archSummary = context.getOrDefault("_meta/architecture.md", "");
-            String dbCtx = "Project DB URL: " + dbUrl + ". Use pg npm package for database access.";
-            List<Map<String, String>> plan = planChanges(prompt, analysis, context, dbCtx);
-            log(task, "plan", "done", plan.size() + " files planned");
-
-            // Step 6 — Codegen
-            log(task, "codegen", "running", "Generating code");
-            for (Map<String, String> fileTask : plan) {
-                String filePath = fileTask.get("file");
-                String action = fileTask.get("action");
-                String desc = fileTask.get("description");
-
-                if ("delete".equals(action)) {
-                    deleteFile(projectId, projectDir, filePath);
-                    continue;
-                }
-
-                String existing = context.get(filePath);
-                String content = generateFile(desc, filePath, existing, archSummary, dbCtx);
-                content = postProcess(filePath, content);
-                saveFile(projectId, projectDir, filePath, content);
-                log(task, "codegen", "running", "Generated " + filePath);
-            }
-
-            // Step 7 — Architecture summary
-            log(task, "architecture", "running", "Writing architecture summary");
-            List<String> allPaths = getFileNames(projectId);
-            String archContent = generateArchSummary(project.getName(), project.getDescription(), allPaths, prompt);
-            saveFile(projectId, projectDir, "_meta/architecture.md", archContent);
-            log(task, "architecture", "done", "Architecture summary saved");
-
-            // Step 8 — Database schema
-            log(task, "db_schema", "running", "Planning database schema");
-            applyDbSchema(task, projectId, projectDir, dbUrl, prompt);
-
-            // Step 9 — API key check
-            log(task, "api_keys", "running", "Checking API keys");
-            boolean needsKey = checkApiKeys(task, projectId, projectDir, prompt);
-            if (needsKey) return; // pipeline paused
-
-            // Step 10 — Build preview container
-            log(task, "build", "running", "Starting preview container");
             int port = docker.findFreePort();
-            String containerId = docker.provisionPreview(projectId, project.getContainerId(), port);
+
+            pipeLog(task, "seed_template", "running", "Seeding project template");
+            seedTemplate(projectDir);
+            pipeLog(task, "seed_template", "done", "Template copied");
+
+            pipeLog(task, "env_vars", "running", "Configuring environment");
+            injectEnvVars(projectDir, projectId, port);
+            pipeLog(task, "env_vars", "done", "Environment configured");
+
+            applyViteProxy(projectDir);
+
+            String aiContext = loadFile(projectDir, "AI_CONTEXT.md");
+            String componentsCtx = loadFile(projectDir, "COMPONENTS.md");
+
+            pipeLog(task, "analyze", "running", "Analyzing your request");
+            TemplateAnalysis analysis = analyzePrompt(aiContext, prompt);
+            pipeLog(task, "analyze", "done", "Feature: " + analysis.featureName());
+
+            pipeLog(task, "backend_model", "running", "Generating " + analysis.featureName() + " model");
+            generateBackendModel(projectDir, aiContext, analysis);
+            pipeLog(task, "backend_model", "done", "Model generated");
+
+            pipeLog(task, "backend_routes", "running", "Generating API routes");
+            generateBackendRoutes(projectDir, aiContext, analysis);
+            pipeLog(task, "backend_routes", "done", "Routes generated");
+
+            pipeLog(task, "route_index", "running", "Wiring routes");
+            updateRouteIndex(projectDir, analysis);
+            pipeLog(task, "route_index", "done", "Routes mounted");
+
+            pipeLog(task, "frontend_types", "running", "Generating TypeScript types and service");
+            generateFrontendTypesAndService(projectDir, aiContext, analysis);
+            pipeLog(task, "frontend_types", "done", "Types and service ready");
+
+            pipeLog(task, "frontend_page", "running", "Building " + analysis.featureName() + " page");
+            generateFeaturePage(projectDir, aiContext, componentsCtx, analysis);
+            pipeLog(task, "frontend_page", "done", "Page generated");
+
+            pipeLog(task, "routing", "running", "Updating navigation");
+            updateAppAndNavbar(projectDir, analysis);
+            pipeLog(task, "routing", "done", "Navigation updated");
+
+            pipeLog(task, "branding", "running", "Applying branding");
+            updateBranding(projectDir, aiContext, analysis);
+            pipeLog(task, "branding", "done", "Branding applied");
+
+            pipeLog(task, "build", "running", "Starting preview container");
+            Map<String, String> envVars = buildContainerEnv(projectDir);
+            String containerId = docker.provisionPreview(projectId, project.getContainerId(), port, envVars);
             project.setContainerId(containerId);
             project.setPreviewPort(port);
             projectRepo.save(project);
-            log(task, "build", "running", "Container started on port " + port);
+            pipeLog(task, "build", "running", "Container started on port " + port);
 
-            // Step 11 — Auto-fix loop
             boolean ready = false;
             for (int round = 0; round < MAX_FIX_ROUNDS && !ready; round++) {
-                Thread.sleep(15_000);
+                Thread.sleep(25_000);
                 List<String> logLines = docker.getLogs(containerId, 100);
                 String errorLog = String.join("\n", logLines);
 
-                if (isHealthy(containerId, port)) {
+                if (isHealthy(port)) {
                     ready = true;
                     break;
                 }
                 if (hasErrors(errorLog)) {
-                    log(task, "autofix", "running", "Fixing errors (round " + (round + 1) + ")");
-                    fixErrors(task, projectId, projectDir, errorLog);
+                    pipeLog(task, "autofix", "running", "Fixing errors (round " + (round + 1) + ")");
+                    fixErrors(projectDir, errorLog, aiContext, componentsCtx);
                 }
             }
 
-            // Done
             project.setStatus(ProjectStatus.ready);
             projectRepo.save(project);
             task.setStatus(TaskStatus.done);
             taskRepo.save(task);
-            log(task, "done", "done", "Build complete. Preview at /preview/" + projectId);
+            pipeLog(task, "done", "done", "Build complete — preview on port " + port);
 
             docker.writeNginxConfig(projectId, "/etc/nginx/conf.d");
 
         } catch (Exception e) {
-            log.error("Pipeline error for task {}: {}", taskId, e.getMessage(), e);
+            log.error("Pipeline failed for task {}: {}", taskId, e.getMessage(), e);
             task.setStatus(TaskStatus.error);
-            log(task, "error", "error", e.getMessage());
+            pipeLog(task, "error", "error", e.getMessage());
             project.setStatus(ProjectStatus.error);
             projectRepo.save(project);
             taskRepo.save(task);
         }
     }
 
-    // ── Step implementations ─────────────────────────────────────────────────
+    // ── Step 1: Seed template from classpath ──────────────────────────────────
 
     private void seedTemplate(Path projectDir) throws IOException {
-        Path templateDir = Path.of(props.getTemplatesDir(), "nextjs-base");
-        if (!Files.exists(templateDir)) return;
+        Resource[] resources = resourceLoader.getResources("classpath:template/**");
         Files.createDirectories(projectDir);
-        Files.walk(templateDir).forEach(src -> {
-            try {
-                Path rel = templateDir.relativize(src);
-                Path dst = projectDir.resolve(rel);
-                if (Files.isDirectory(src)) {
-                    Files.createDirectories(dst);
-                } else if (!Files.exists(dst)) {
-                    Files.createDirectories(dst.getParent());
-                    Files.copy(src, dst);
+
+        for (Resource resource : resources) {
+            if (!resource.isReadable()) continue;
+
+            String uriStr = resource.getURI().toString();
+            int idx = uriStr.lastIndexOf("/template/");
+            if (idx < 0) continue;
+            String relativePath = uriStr.substring(idx + "/template/".length());
+            if (relativePath.isBlank()) continue;
+
+            if (relativePath.contains("node_modules/")
+                || relativePath.startsWith("dist/")
+                || relativePath.contains("/.claude/")
+                || relativePath.equals(".env")
+                || relativePath.equals("server/.env")) continue;
+
+            Path dest = projectDir.resolve(relativePath);
+            if (!Files.exists(dest)) {
+                Files.createDirectories(dest.getParent());
+                try (InputStream is = resource.getInputStream()) {
+                    Files.copy(is, dest);
                 }
-            } catch (IOException e) {
-                log.warn("Seed copy failed: {}", e.getMessage());
             }
-        });
+        }
     }
 
-    private String provisionDb(UUID projectId) {
+    // ── Step 2: Inject env vars ───────────────────────────────────────────────
+
+    private void injectEnvVars(Path projectDir, UUID projectId, int port) throws IOException {
         String dbName = "proj_" + projectId.toString().replace("-", "_");
-        String adminUrl = props.getProjectsDir().contains("/projects")
-            ? System.getenv().getOrDefault("SPRING_DATASOURCE_URL", "jdbc:postgresql://postgres:5432/codemax")
-            : "jdbc:postgresql://localhost:5432/codemax";
-        // Extract base URL without db name
-        String baseUrl = adminUrl.replaceAll("/[^/]+$", "/postgres");
-        String user = System.getenv().getOrDefault("SPRING_DATASOURCE_USERNAME", "codemax");
-        String pass = System.getenv().getOrDefault("SPRING_DATASOURCE_PASSWORD", "codemax");
-        try (var conn = DriverManager.getConnection(baseUrl, user, pass);
-             var stmt = conn.createStatement()) {
-            stmt.execute("CREATE DATABASE \"" + dbName + "\"");
-        } catch (Exception e) {
-            if (!e.getMessage().contains("already exists")) log.warn("DB provision: {}", e.getMessage());
-        }
-        String host = adminUrl.replaceAll("jdbc:postgresql://([^/]+)/.*", "$1");
-        return "postgresql://" + user + ":" + pass + "@" + host + "/" + dbName;
+        String mongoUri = props.getMongoRootUrl() + "/" + dbName + "?authSource=admin";
+        String jwtSecret = generateSecret();
+        String appUrl = "http://localhost:" + port;
+
+        Map<String, String> frontendEnv = new LinkedHashMap<>();
+        frontendEnv.put("VITE_API_BASE_URL", "");
+        frontendEnv.put("VITE_APP_NAME", "My App");
+        frontendEnv.put("VITE_GOOGLE_CLIENT_ID", "");
+        frontendEnv.put("APP_URL", appUrl);
+        frontendEnv.put("NODE_ENV", "development");
+        writeEnvFile(projectDir.resolve(".env"), frontendEnv);
+
+        Map<String, String> serverEnv = new LinkedHashMap<>();
+        serverEnv.put("PORT", "3000");
+        serverEnv.put("MONGODB_URI", mongoUri);
+        serverEnv.put("JWT_SECRET", jwtSecret);
+        serverEnv.put("JWT_EXPIRES_IN", "7d");
+        serverEnv.put("APP_URL", appUrl);
+        serverEnv.put("EMAIL_PROVIDER", "resend");
+        serverEnv.put("FROM_EMAIL", "noreply@example.com");
+        serverEnv.put("GOOGLE_CLIENT_ID", "");
+        serverEnv.put("GOOGLE_CLIENT_SECRET", "");
+        serverEnv.put("GITHUB_CLIENT_ID", "");
+        serverEnv.put("GITHUB_CLIENT_SECRET", "");
+        serverEnv.put("RESEND_API_KEY", "");
+        writeEnvFile(projectDir.resolve("server/.env"), serverEnv);
     }
 
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> analyzePrompt(String prompt, List<String> files) {
-        String sys = """
-            You are a code analysis expert. Analyze the user's request and classify it.
-            Return JSON with: change_type (new_project|ui_change|logic_change|full_refactor),
-            affected_files (array of existing file paths relevant to the change),
-            summary (one sentence).
+    // ── Step 3: Vite proxy ────────────────────────────────────────────────────
+
+    private void applyViteProxy(Path projectDir) throws IOException {
+        String content = """
+            import { defineConfig } from 'vite'
+            import react from '@vitejs/plugin-react'
+            import path from 'path'
+
+            const port = Number(process.env.VITE_PORT ?? 5173)
+
+            export default defineConfig({
+              plugins: [react()],
+              server: {
+                port,
+                host: true,
+                strictPort: true,
+                proxy: {
+                  '/api': {
+                    target: 'http://localhost:3000',
+                    changeOrigin: true,
+                  },
+                },
+              },
+              resolve: {
+                alias: {
+                  '@': path.resolve(__dirname, './src'),
+                },
+              },
+            })
             """;
-        String user = "Files: " + files + "\n\nRequest: " + prompt;
+        Files.writeString(projectDir.resolve("vite.config.ts"), content);
+    }
+
+    // ── Step 4: Analyze ───────────────────────────────────────────────────────
+
+    @SuppressWarnings("unchecked")
+    private TemplateAnalysis analyzePrompt(String aiContext, String prompt) {
+        String sys = systemPrompt(aiContext, "") + """
+
+            Analyze the user's request and return JSON:
+            {
+              "feature_name": "Task",
+              "feature_plural": "tasks",
+              "feature_route": "/tasks",
+              "fields": [{"name": "title", "type": "string", "required": true}],
+              "accent_color_rgb": "99 102 241",
+              "app_tagline": "...",
+              "hero_headline": "...",
+              "hero_subheadline": "...",
+              "features_list": [{"icon": "Zap", "title": "...", "description": "..."}]
+            }
+            feature_name: PascalCase singular. feature_plural: lowercase plural.
+            accent_color_rgb: RGB triple without commas, e.g. "20 184 166". Match the app mood.
+            icon: valid lucide-react icon name.
+            """;
         try {
-            return objectMapper.readValue(ai.chatJson(sys, user), Map.class);
+            Map<String, Object> r = objectMapper.readValue(ai.chatJson(sys, prompt), Map.class);
+            return new TemplateAnalysis(
+                str(r, "feature_name", "Item"),
+                str(r, "feature_plural", "items"),
+                str(r, "feature_route", "/dashboard"),
+                (List<Map<String, Object>>) r.getOrDefault("fields", List.of()),
+                str(r, "accent_color_rgb", "99 102 241"),
+                str(r, "app_tagline", ""),
+                str(r, "hero_headline", ""),
+                str(r, "hero_subheadline", ""),
+                (List<Map<String, String>>) r.getOrDefault("features_list", List.of())
+            );
         } catch (Exception e) {
-            return Map.of("change_type", "new_project", "affected_files", List.of(), "summary", prompt);
+            log.warn("Analysis parse failed: {}", e.getMessage());
+            return new TemplateAnalysis("Item", "items", "/dashboard",
+                List.of(), "99 102 241", "", "", "", List.of());
         }
     }
 
-    private Map<String, String> retrieveContext(UUID projectId, Map<String, Object> analysis) {
-        Map<String, String> ctx = new HashMap<>();
-        String changeType = (String) analysis.getOrDefault("change_type", "new_project");
-        if ("new_project".equals(changeType)) return ctx;
+    // ── Step 5: Backend Mongoose model ────────────────────────────────────────
 
-        List<?> affected = (List<?>) analysis.getOrDefault("affected_files", List.of());
-        for (Object f : affected) {
-            fileRepo.findByProjectIdAndFilePath(projectId, f.toString())
-                .ifPresent(pf -> ctx.put(pf.getFilePath(), pf.getContent()));
-        }
-        // Always include architecture doc if present
-        fileRepo.findByProjectIdAndFilePath(projectId, "_meta/architecture.md")
-            .ifPresent(pf -> ctx.put("_meta/architecture.md", pf.getContent()));
-        return ctx;
+    private void generateBackendModel(Path projectDir, String aiContext,
+                                       TemplateAnalysis a) throws IOException {
+        String todoRef = loadFile(projectDir, "server/src/models/Todo.ts");
+        String sys = systemPrompt(aiContext, "") + """
+
+            Generate a Mongoose TypeScript model following the exact pattern of the reference.
+            - Interface I%s extends Document with all fields + timestamps
+            - userId: Types.ObjectId required, indexed
+            - timestamps: true in schema options
+            Return ONLY the TypeScript file content, no markdown fences.
+            """.formatted(a.featureName());
+        String content = stripFences(ai.chat(sys,
+            "Feature: " + a.featureName() + " (" + a.featurePlural() + ")\n" +
+            "Fields: " + a.fields() + "\n\nReference Todo model:\n" + todoRef));
+        save(projectDir, "server/src/models/" + a.featureName() + ".ts", content);
+        Files.deleteIfExists(projectDir.resolve("server/src/models/Todo.ts"));
     }
+
+    // ── Step 6: Backend Express routes ───────────────────────────────────────
+
+    private void generateBackendRoutes(Path projectDir, String aiContext,
+                                        TemplateAnalysis a) throws IOException {
+        String todoRef = loadFile(projectDir, "server/src/routes/todos.ts");
+        String sys = systemPrompt(aiContext, "") + """
+
+            Generate a complete Express router following the todos.ts pattern exactly.
+            - Import and use the %s model (not Todo)
+            - All queries must include { userId: req.user._id }
+            - Full CRUD: GET /, POST /, GET /:id, PUT /:id, DELETE /:id
+            - Use authenticate middleware on all routes
+            Return ONLY the TypeScript file content, no markdown fences.
+            """.formatted(a.featureName());
+        String content = stripFences(ai.chat(sys,
+            "Feature: " + a.featureName() + " (" + a.featurePlural() + ")\n" +
+            "Fields: " + a.fields() + "\n\nReference todos router:\n" + todoRef));
+        save(projectDir, "server/src/routes/" + a.featurePlural() + ".ts", content);
+        Files.deleteIfExists(projectDir.resolve("server/src/routes/todos.ts"));
+    }
+
+    // ── Step 7: Server route index ────────────────────────────────────────────
+
+    private void updateRouteIndex(Path projectDir, TemplateAnalysis a) throws IOException {
+        String current = loadFile(projectDir, "server/src/routes/index.ts");
+        String sys = """
+            Update this Express route index file:
+            1. Remove the todos import and router.use('/todos', ...) line
+            2. Add: import %sRouter from './%s'  and  router.use('/%s', %sRouter)
+            Keep all other routes identical. Return ONLY the complete TypeScript file, no fences.
+            """.formatted(a.featurePlural(), a.featurePlural(), a.featurePlural(), a.featurePlural());
+        save(projectDir, "server/src/routes/index.ts", stripFences(ai.chat(sys, current)));
+    }
+
+    // ── Step 8: Frontend types + api config + service ─────────────────────────
+
+    private void generateFrontendTypesAndService(Path projectDir, String aiContext,
+                                                   TemplateAnalysis a) throws IOException {
+        // types/index.ts
+        String curTypes = loadFile(projectDir, "src/types/index.ts");
+        String typesSys = systemPrompt(aiContext, "") + """
+
+            Update this types file:
+            1. Add %s, Create%sPayload, Update%sPayload interfaces from the fields
+            2. Remove Todo, TodoPriority, CreateTodoPayload, UpdateTodoPayload
+            Keep User, AuthTokens, ApiResponse, ApiError and all other types.
+            Return ONLY the complete TypeScript file, no fences.
+            """.formatted(a.featureName(), a.featureName(), a.featureName());
+        save(projectDir, "src/types/index.ts", stripFences(ai.chat(typesSys,
+            "Feature: " + a.featureName() + "\nFields: " + a.fields() +
+            "\n\nCurrent src/types/index.ts:\n" + curTypes)));
+
+        // config/api.ts
+        String curApi = loadFile(projectDir, "src/config/api.ts");
+        String apiSys = systemPrompt(aiContext, "") + """
+
+            Update src/config/api.ts:
+            1. Remove todo/todos endpoint entries
+            2. Add: %s: '/api/%s' and %s: (id: string) => '/api/%s/' + id
+            Return ONLY the complete TypeScript file, no fences.
+            """.formatted(a.featurePlural(), a.featurePlural(),
+                          a.featureName().toLowerCase(), a.featurePlural());
+        save(projectDir, "src/config/api.ts", stripFences(ai.chat(apiSys,
+            "Current src/config/api.ts:\n" + curApi)));
+
+        // services/{plural}.ts
+        String curService = loadFile(projectDir, "src/services/todos.ts");
+        String svcSys = systemPrompt(aiContext, "") + """
+
+            Generate a frontend service file for the %s resource.
+            Follow the exact todos.ts pattern. Use the new endpoint keys from api.ts.
+            Return ONLY the complete TypeScript file, no fences.
+            """.formatted(a.featureName());
+        save(projectDir, "src/services/" + a.featurePlural() + ".ts", stripFences(ai.chat(svcSys,
+            "Feature: " + a.featureName() + " (" + a.featurePlural() + ")\n" +
+            "Fields: " + a.fields() + "\n\nReference todos service:\n" + curService)));
+        Files.deleteIfExists(projectDir.resolve("src/services/todos.ts"));
+    }
+
+    // ── Step 9: Feature page ──────────────────────────────────────────────────
+
+    private void generateFeaturePage(Path projectDir, String aiContext, String componentsCtx,
+                                      TemplateAnalysis a) throws IOException {
+        String dashRef = loadFile(projectDir, "src/pages/Dashboard.tsx");
+        String sys = systemPrompt(aiContext, componentsCtx) + """
+
+            Generate a complete React TSX page for the %s feature.
+            Strictly follow the structural pattern of Dashboard.tsx (imports, Framer Motion, auth guard).
+            Requirements:
+            - Full CRUD: list, create (Modal + form), edit (Modal + form), delete (confirm)
+            - Use ONLY '@/components/ui' components: Button, Input, Modal, Badge, EmptyState, useToast, Skeleton
+            - Framer Motion AnimatePresence + motion.div for list items
+            - useAuth hook for current user
+            - Loading state: Skeleton; empty state: EmptyState with create CTA
+            - Errors: toast.error(); success: toast.success()
+            - Strict TypeScript, no 'any'
+            Return ONLY the complete TSX file, no markdown fences.
+            """.formatted(a.featureName());
+        String content = stripFences(ai.chat(sys,
+            "Feature: " + a.featureName() + " (" + a.featurePlural() + ")\n" +
+            "Fields: " + a.fields() + "\nRoute: " + a.featureRoute() +
+            "\n\nReference Dashboard.tsx:\n" + dashRef));
+        save(projectDir, "src/pages/" + a.featureName() + "Page.tsx", content);
+        Files.deleteIfExists(projectDir.resolve("src/pages/Dashboard.tsx"));
+    }
+
+    // ── Step 10: App.tsx + Navbar ─────────────────────────────────────────────
+
+    private void updateAppAndNavbar(Path projectDir, TemplateAnalysis a) throws IOException {
+        String curApp = loadFile(projectDir, "src/App.tsx");
+        String appSys = """
+            Update src/App.tsx:
+            1. Replace Dashboard lazy import with: const %sPage = lazy(() => import('@/pages/%sPage'))
+            2. Replace the /dashboard route element with <%sPage /> at path "%s"
+            Keep all other routes and imports identical. Return ONLY the complete file, no fences.
+            """.formatted(a.featureName(), a.featureName(), a.featureName(), a.featureRoute());
+        save(projectDir, "src/App.tsx", stripFences(ai.chat(appSys, curApp)));
+
+        String curNav = loadFile(projectDir, "src/components/layout/Navbar.tsx");
+        String navSys = """
+            Update the NAV_ITEMS (or equivalent) array in Navbar.tsx to replace any Dashboard entry
+            with: { label: '%s', href: '%s' } (use whatever shape the existing items use).
+            Keep all other nav items identical. Return ONLY the complete file, no fences.
+            """.formatted(a.featureName(), a.featureRoute());
+        save(projectDir, "src/components/layout/Navbar.tsx", stripFences(ai.chat(navSys, curNav)));
+    }
+
+    // ── Step 11: Branding ─────────────────────────────────────────────────────
+
+    private void updateBranding(Path projectDir, String aiContext, TemplateAnalysis a) throws IOException {
+        if (!a.accentColorRgb().isBlank()) {
+            String theme = loadFile(projectDir, "src/config/theme.ts");
+            if (!theme.isBlank()) {
+                save(projectDir, "src/config/theme.ts",
+                    theme.replaceAll("accent:\\s*'[0-9 ]+'", "accent: '" + a.accentColorRgb() + "'"));
+            }
+        }
+
+        if (!a.heroHeadline().isBlank()) {
+            String heroFile = loadFile(projectDir, "src/sections/HeroSection.tsx");
+            if (!heroFile.isBlank()) {
+                String sys = systemPrompt(aiContext, "") + """
+                    Update only the headline, subheadline, and tagline text in this HeroSection.
+                    Keep all JSX structure, classNames, and Framer Motion animations identical.
+                    Return ONLY the complete file, no fences.
+                    """;
+                save(projectDir, "src/sections/HeroSection.tsx", stripFences(ai.chat(sys,
+                    "headline: " + a.heroHeadline() + "\nsubheadline: " + a.heroSubheadline() +
+                    "\ntagline: " + a.appTagline() + "\n\nCurrent file:\n" + heroFile)));
+            }
+        }
+
+        if (!a.featuresList().isEmpty()) {
+            String featFile = loadFile(projectDir, "src/sections/FeaturesSection.tsx");
+            if (!featFile.isBlank()) {
+                String sys = systemPrompt(aiContext, "") + """
+                    Replace the FEATURES array in FeaturesSection.tsx with the provided list.
+                    Use lucide-react icons by name. Keep all JSX and animations identical.
+                    Return ONLY the complete file, no fences.
+                    """;
+                save(projectDir, "src/sections/FeaturesSection.tsx", stripFences(ai.chat(sys,
+                    "New features: " + a.featuresList() + "\n\nCurrent file:\n" + featFile)));
+            }
+        }
+    }
+
+    // ── Auto-fix ──────────────────────────────────────────────────────────────
 
     @SuppressWarnings("unchecked")
-    private List<Map<String, String>> planChanges(String prompt, Map<String, Object> analysis,
-                                                   Map<String, String> context, String dbCtx) {
-        String sys = """
-            You are an expert Next.js developer. Plan the file changes needed.
-            Rules: use Pages Router, plain .js/.jsx (NO TypeScript), Tailwind CSS only.
-            Never include _app.js or _document.js unless asked.
-            For persistent data, include pages/api/*.js routes that use the pg npm package.
-            Return JSON: {"tasks": [{"file": "path", "action": "create|modify|delete", "description": "what to do"}]}
+    private void fixErrors(Path projectDir, String errorLog, String aiContext,
+                            String componentsCtx) {
+        Map<String, String> files = new LinkedHashMap<>();
+        collectTsFiles(projectDir.resolve("src"), projectDir, files, 8);
+        collectTsFiles(projectDir.resolve("server/src"), projectDir, files, 4);
+
+        String sys = systemPrompt(aiContext, componentsCtx) + """
+
+            Fix the TypeScript compilation/import errors in the provided files.
+            Return JSON: {"files": {"relative/path.ts": "fixed content", ...}}
+            Only include files that need changes. No markdown fences inside file content.
             """;
-        String fileList = context.isEmpty() ? "none" : String.join(", ", context.keySet());
-        String user = "Existing files: " + fileList + "\n\nDB context: " + dbCtx + "\n\nRequest: " + prompt;
-        try {
-            Map<String, Object> result = objectMapper.readValue(ai.chatJson(sys, user), Map.class);
-            return (List<Map<String, String>>) result.get("tasks");
-        } catch (Exception e) {
-            log.warn("Plan parse error: {}", e.getMessage());
-            return List.of();
-        }
-    }
-
-    private String generateFile(String description, String filePath, String existing,
-                                 String archSummary, String dbCtx) {
-        String sys = """
-            You are an expert Next.js developer. Generate the complete file content.
-            Use plain JavaScript (NO TypeScript). Tailwind CSS for styling.
-            For API routes: ESM imports, export default async function handler(req, res).
-            For DB access: import {{ Pool }} from 'pg', use DATABASE_URL env var.
-            Return ONLY the file content, no markdown fences.
-            """;
-        String user = "File: " + filePath
-            + "\nTask: " + description
-            + (existing != null ? "\n\nCurrent content:\n" + existing : "")
-            + (archSummary.isBlank() ? "" : "\n\nArchitecture:\n" + archSummary)
-            + "\n\nDB context: " + dbCtx;
-        return ai.chat(sys, user);
-    }
-
-    private String generateArchSummary(String name, String description, List<String> files, String change) {
-        String sys = "You are a technical writer. Generate a concise (under 300 words) architecture summary in Markdown.";
-        String user = "App: " + name + "\nDescription: " + description
-            + "\nFiles: " + files + "\nLatest change: " + change;
-        return ai.chat(sys, user);
-    }
-
-    @SuppressWarnings("unchecked")
-    private void applyDbSchema(Task task, UUID projectId, Path projectDir,
-                                String dbUrl, String prompt) throws Exception {
-        // Collect generated JS files
-        Map<String, String> srcFiles = new HashMap<>();
-        fileRepo.findByProjectIdOrderByFilePath(projectId).stream()
-            .filter(f -> f.getFilePath().endsWith(".js") || f.getFilePath().endsWith(".jsx"))
-            .forEach(f -> srcFiles.put(f.getFilePath(), f.getContent()));
-
-        String sys = """
-            You are a PostgreSQL schema expert. Analyze the app code and return JSON:
-            {"needs_db": true/false, "schema_sql": "CREATE TABLE IF NOT EXISTS...", "description": "summary"}
-            Rules: only CREATE TABLE IF NOT EXISTS and ALTER TABLE ADD COLUMN IF NOT EXISTS.
-            Always include id SERIAL PRIMARY KEY and created_at TIMESTAMPTZ DEFAULT NOW().
-            NEVER drop tables or columns.
-            """;
-        String user = "Prompt: " + prompt + "\n\nCode files:\n" +
-            srcFiles.entrySet().stream().map(e -> "// " + e.getKey() + "\n" + e.getValue())
+        String userMsg = "Errors:\n" + errorLog + "\n\nFiles:\n" +
+            files.entrySet().stream()
+                .map(e -> "// " + e.getKey() + "\n" + e.getValue())
                 .collect(Collectors.joining("\n\n"));
-
         try {
-            Map<String, Object> schema = objectMapper.readValue(ai.chatJson(sys, user), Map.class);
-            if (Boolean.TRUE.equals(schema.get("needs_db")) && schema.get("schema_sql") != null) {
-                String sql = (String) schema.get("schema_sql");
-                // Execute schema SQL against project DB
-                String jdbcUrl = dbUrl.replace("postgresql://", "jdbc:postgresql://");
-                String[] parts = jdbcUrl.split("@");
-                // Parse credentials from URL
-                String creds = parts[0].replace("jdbc:postgresql://", "");
-                String[] credParts = creds.split(":");
-                String user2 = credParts[0];
-                String pass = credParts[1];
-                String urlPart = "jdbc:postgresql://" + parts[1];
-                try (var conn = DriverManager.getConnection(urlPart, user2, pass);
-                     var stmt = conn.createStatement()) {
-                    stmt.execute(sql);
-                }
-                log(task, "db_schema", "done", (String) schema.get("description"));
-
-                // Generate API routes to wire the DB
-                generateDbApiRoutes(task, projectId, projectDir, prompt, sql, srcFiles);
-            } else {
-                log(task, "db_schema", "done", "No database needed");
+            Map<String, Object> result = objectMapper.readValue(ai.chatJson(sys, userMsg), Map.class);
+            Map<String, String> fixed = (Map<String, String>) result.get("files");
+            if (fixed != null) {
+                fixed.forEach((path, content) -> {
+                    try { save(projectDir, path, stripFences(content)); }
+                    catch (IOException e) { log.warn("Could not save fixed file {}: {}", path, e.getMessage()); }
+                });
             }
         } catch (Exception e) {
-            log.warn("DB schema step failed: {}", e.getMessage());
-            log(task, "db_schema", "done", "Schema step skipped: " + e.getMessage());
+            log.warn("fixErrors failed: {}", e.getMessage());
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private void generateDbApiRoutes(Task task, UUID projectId, Path projectDir,
-                                      String prompt, String schemaSql,
-                                      Map<String, String> srcFiles) throws Exception {
-        String sys = """
-            You are a Next.js API routes expert. Generate pages/api/*.js handlers and update pages/index.js.
-            Rules: plain JavaScript, ESM imports, use pg Pool, CREATE TABLE IF NOT EXISTS in each handler,
-            export default async function handler(req, res).
-            Return JSON: {"files": {"pages/api/items.js": "...", "pages/index.js": "..."}}
-            """;
-        String pageFiles = srcFiles.entrySet().stream()
-            .filter(e -> e.getKey().startsWith("pages/") && !e.getKey().startsWith("pages/api/"))
-            .limit(5)
-            .map(e -> "// " + e.getKey() + "\n" + e.getValue())
-            .collect(Collectors.joining("\n\n"));
-        String user = "Prompt: " + prompt + "\nSchema:\n" + schemaSql + "\n\nPage files:\n" + pageFiles;
-
-        Map<String, Object> result = objectMapper.readValue(ai.chatJson(sys, user), Map.class);
-        Map<String, String> files = (Map<String, String>) result.get("files");
-        if (files != null) {
-            for (Map.Entry<String, String> entry : files.entrySet()) {
-                String content = postProcess(entry.getKey(), entry.getValue());
-                saveFile(projectId, projectDir, entry.getKey(), content);
-            }
-            log(task, "db_wiring", "done", "API routes generated");
-        }
-    }
-
-    private boolean checkApiKeys(Task task, UUID projectId, Path projectDir, String prompt) {
-        // Scan for process.env.XXX_KEY patterns in generated files
-        Pattern pattern = Pattern.compile("process\\.env\\.(\\w+(?:_KEY|_SECRET|_TOKEN|_API_KEY|_WEBHOOK))", Pattern.CASE_INSENSITIVE);
-        Set<String> missing = new HashSet<>();
-        fileRepo.findByProjectIdOrderByFilePath(projectId).forEach(f -> {
-            Matcher m = pattern.matcher(f.getContent());
-            while (m.find()) missing.add(m.group(1));
-        });
-        if (missing.isEmpty()) {
-            log(task, "api_keys", "done", "No external API keys required");
-            return false;
-        }
-        // For now, write an empty .env.local and continue — user can provide keys later
-        try {
-            Path envFile = projectDir.resolve(".env.local");
-            if (!Files.exists(envFile)) {
-                Files.writeString(envFile, "# Add your API keys here\n" +
-                    missing.stream().map(k -> k + "=").collect(Collectors.joining("\n")));
-            }
+    private void collectTsFiles(Path dir, Path base, Map<String, String> out, int limit) {
+        if (!Files.exists(dir)) return;
+        try (Stream<Path> walk = Files.walk(dir)) {
+            walk.filter(p -> (p.toString().endsWith(".ts") || p.toString().endsWith(".tsx"))
+                    && !p.toString().contains("node_modules"))
+                .limit(limit)
+                .forEach(p -> {
+                    try { out.put(base.relativize(p).toString(), Files.readString(p)); }
+                    catch (IOException ignored) {}
+                });
         } catch (IOException e) {
-            log.warn("Could not write .env.local: {}", e.getMessage());
-        }
-        log(task, "api_keys", "done", "Keys referenced: " + missing + " — add them in .env.local");
-        return false;
-    }
-
-    @SuppressWarnings("unchecked")
-    private void fixErrors(Task task, UUID projectId, Path projectDir, String errorLog) throws Exception {
-        Map<String, String> files = new HashMap<>();
-        fileRepo.findByProjectIdOrderByFilePath(projectId).stream()
-            .filter(f -> f.getFilePath().endsWith(".js") || f.getFilePath().endsWith(".jsx"))
-            .forEach(f -> files.put(f.getFilePath(), f.getContent()));
-
-        String sys = """
-            You are a Next.js debugging expert. Fix the compilation errors in the provided files.
-            Return JSON: {"files": {"path": "fixed content", ...}}
-            Only include files that need changes. Plain JavaScript, no TypeScript.
-            """;
-        String user = "Errors:\n" + errorLog + "\n\nFiles:\n" +
-            files.entrySet().stream().map(e -> "// " + e.getKey() + "\n" + e.getValue())
-                .collect(Collectors.joining("\n\n"));
-
-        Map<String, Object> result = objectMapper.readValue(ai.chatJson(sys, user), Map.class);
-        Map<String, String> fixed = (Map<String, String>) result.get("files");
-        if (fixed != null) {
-            for (Map.Entry<String, String> entry : fixed.entrySet()) {
-                String content = postProcess(entry.getKey(), entry.getValue());
-                saveFile(projectId, projectDir, entry.getKey(), content);
-            }
+            log.warn("collectTsFiles failed: {}", e.getMessage());
         }
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private String systemPrompt(String aiContext, String componentsCtx) {
+        StringBuilder sb = new StringBuilder(
+            "You are an expert TypeScript + React + Express developer working on this template:\n\n");
+        if (!aiContext.isBlank()) {
+            String truncated = aiContext.length() > 8000 ? aiContext.substring(0, 8000) + "\n...(truncated)" : aiContext;
+            sb.append(truncated).append("\n\n");
+        }
+        if (!componentsCtx.isBlank()) {
+            String truncated = componentsCtx.length() > 4000 ? componentsCtx.substring(0, 4000) + "\n...(truncated)" : componentsCtx;
+            sb.append("Component library:\n").append(truncated).append("\n\n");
+        }
+        return sb.toString();
+    }
+
+    private Map<String, String> buildContainerEnv(Path projectDir) {
+        Map<String, String> merged = new LinkedHashMap<>();
+        merged.putAll(docker.readEnvFile(projectDir.resolve("server/.env")));
+        merged.putAll(docker.readEnvFile(projectDir.resolve(".env")));
+        return merged;
+    }
+
+    private void writeEnvFile(Path envFile, Map<String, String> values) throws IOException {
+        Files.createDirectories(envFile.getParent());
+        StringBuilder sb = new StringBuilder();
+        values.forEach((k, v) -> sb.append(k).append("=").append(v).append("\n"));
+        Files.writeString(envFile, sb.toString());
+    }
+
+    private void save(Path projectDir, String relativePath, String content) throws IOException {
+        if (content == null || content.isBlank()) return;
+        Path dest = projectDir.resolve(relativePath);
+        Files.createDirectories(dest.getParent());
+        Files.writeString(dest, content);
+        UUID projectId = UUID.fromString(projectDir.getFileName().toString());
+        ProjectFile pf = fileRepo.findByProjectIdAndFilePath(projectId, relativePath)
+            .orElseGet(() -> {
+                ProjectFile f = new ProjectFile();
+                f.setProjectId(projectId);
+                f.setFilePath(relativePath);
+                return f;
+            });
+        pf.setContent(content);
+        fileRepo.save(pf);
+    }
+
+    private String loadFile(Path projectDir, String relativePath) {
+        try {
+            Path p = projectDir.resolve(relativePath);
+            return Files.exists(p) ? Files.readString(p) : "";
+        } catch (IOException e) {
+            return "";
+        }
+    }
+
+    private String stripFences(String content) {
+        if (content == null) return "";
+        return content.replaceAll("^```[a-zA-Z]*\\n?", "").replaceAll("\\n?```$", "").trim();
+    }
+
+    private String generateSecret() {
+        byte[] bytes = new byte[32];
+        new SecureRandom().nextBytes(bytes);
+        return HexFormat.of().formatHex(bytes);
+    }
+
+    private String str(Map<String, Object> map, String key, String def) {
+        Object v = map.get(key);
+        return v instanceof String s ? s : def;
+    }
 
     @Transactional
     protected void markRunning(Task task, Project project, String prompt) {
@@ -421,58 +611,23 @@ public class PipelineService {
         project.setStatus(ProjectStatus.building);
         taskRepo.save(task);
         projectRepo.save(project);
-        log(task, "start", "running", "Processing prompt: " + prompt);
+        pipeLog(task, "start", "running", "Processing: " + prompt);
     }
 
     @Transactional
-    protected void log(Task task, String step, String status, String detail) {
-        AgentLogEntry entry = new AgentLogEntry(step, status,
-            OffsetDateTime.now().toString(), detail);
+    protected void pipeLog(Task task, String step, String status, String detail) {
+        AgentLogEntry entry = new AgentLogEntry(step, status, OffsetDateTime.now().toString(), detail);
         if (task.getAgentLog() == null) task.setAgentLog(new ArrayList<>());
         task.getAgentLog().add(entry);
         taskRepo.save(task);
+        log.info("[pipeline] {} — {}: {}", step, status, detail);
     }
 
-    private List<String> getFileNames(UUID projectId) {
-        return fileRepo.findByProjectIdOrderByFilePath(projectId)
-            .stream().map(ProjectFile::getFilePath).toList();
-    }
-
-    private void saveFile(UUID projectId, Path projectDir, String filePath, String content) throws IOException {
-        // Write to disk
-        Path dest = projectDir.resolve(filePath);
-        Files.createDirectories(dest.getParent());
-        Files.writeString(dest, content);
-        // Persist in DB
-        ProjectFile pf = fileRepo.findByProjectIdAndFilePath(projectId, filePath)
-            .orElseGet(() -> { var f = new ProjectFile(); f.setProjectId(projectId); f.setFilePath(filePath); return f; });
-        pf.setContent(content);
-        fileRepo.save(pf);
-    }
-
-    private void deleteFile(UUID projectId, Path projectDir, String filePath) throws IOException {
-        Files.deleteIfExists(projectDir.resolve(filePath));
-        fileRepo.findByProjectIdAndFilePath(projectId, filePath).ifPresent(f -> fileRepo.deleteById(f.getId()));
-    }
-
-    /** Strip TypeScript and fix CJS exports in .js files. */
-    private String postProcess(String filePath, String content) {
-        if (!filePath.endsWith(".js") && !filePath.endsWith(".jsx")) return content;
-        // Remove markdown code fences if GPT wrapped the response
-        content = content.replaceAll("^```[a-z]*\\n?", "").replaceAll("\\n?```$", "").trim();
-        // Convert module.exports = ... to export default ...
-        content = content.replaceAll("module\\.exports\\s*=\\s*", "export default ");
-        // Convert require() to import where simple
-        content = content.replaceAll("const\\s+(\\w+)\\s*=\\s*require\\(['\"]([^'\"]+)['\"]\\)", "import $1 from '$2'");
-        return content;
-    }
-
-    private boolean isHealthy(String containerId, int port) {
+    private boolean isHealthy(int port) {
         try {
-            HttpClient client = HttpClient.newBuilder().connectTimeout(java.time.Duration.ofSeconds(3)).build();
-            HttpRequest req = HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/")).GET().build();
-            int status = client.send(req, HttpResponse.BodyHandlers.discarding()).statusCode();
-            return status < 500;
+            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
+            HttpRequest req = HttpRequest.newBuilder(URI.create("http://localhost:" + port)).GET().build();
+            return client.send(req, HttpResponse.BodyHandlers.discarding()).statusCode() < 500;
         } catch (Exception e) {
             return false;
         }
@@ -480,10 +635,11 @@ public class PipelineService {
 
     private static final List<String> ERROR_INDICATORS = List.of(
         "Module not found", "SyntaxError", "Cannot find module",
-        "error TS", "Type error", "Failed to compile", "Build error"
+        "error TS", "Type error", "Failed to compile", "Build error",
+        "ERR_MODULE_NOT_FOUND"
     );
 
-    private boolean hasErrors(String log) {
-        return ERROR_INDICATORS.stream().anyMatch(log::contains);
+    private boolean hasErrors(String logContent) {
+        return ERROR_INDICATORS.stream().anyMatch(logContent::contains);
     }
 }

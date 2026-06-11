@@ -12,8 +12,11 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 @Slf4j
@@ -25,6 +28,7 @@ public class DockerService {
     private static final String VOLUME_NAME = "codemax_projects";
     private static final int PORT_START = 4000;
     private static final int PORT_END = 5000;
+    private static final int VITE_INTERNAL_PORT = 5173;
 
     private final DockerClient docker;
 
@@ -40,9 +44,14 @@ public class DockerService {
         return "codemax_preview_" + projectId;
     }
 
-    /** Create (or recreate) and start the preview container. Returns the container ID. */
-    public String provisionPreview(UUID projectId, String existingContainerId, int port) {
-        // Remove existing container if present
+    /**
+     * Create (or recreate) and start the preview container for a full-stack project.
+     * Runs both Express (port 3000 internal) and Vite dev server (port 5173 internal).
+     * The external port binds to Vite; the browser proxies /api/* to Express via Vite.
+     * Returns the container ID.
+     */
+    public String provisionPreview(UUID projectId, String existingContainerId, int port,
+                                    Map<String, String> envVars) {
         if (existingContainerId != null && !existingContainerId.isBlank()) {
             try {
                 docker.stopContainerCmd(existingContainerId).exec();
@@ -53,27 +62,53 @@ public class DockerService {
         String name = containerName(projectId);
         try { docker.removeContainerCmd(name).withForce(true).exec(); } catch (Exception ignored) {}
 
-        String workDir = "/projects/" + projectId;
-        String cmd = "cd " + workDir + " && npm install && npm run dev";
+        String base = "/projects/" + projectId;
+        // Install deps for both root (Vite) and server (Express), then start both
+        String cmd = "cd " + base + "/server && npm install --silent && npm run dev & " +
+                     "cd " + base + " && npm install --silent && " +
+                     "VITE_PORT=" + VITE_INTERNAL_PORT + " npm run dev -- --host 0.0.0.0";
+
+        // Build env list from provided map plus defaults
+        List<String> env = new ArrayList<>();
+        env.add("NODE_ENV=development");
+        env.add("CHOKIDAR_USEPOLLING=true");
+        env.add("VITE_PORT=" + VITE_INTERNAL_PORT);
+        envVars.forEach((k, v) -> env.add(k + "=" + v));
 
         CreateContainerResponse container = docker.createContainerCmd(IMAGE)
             .withName(name)
             .withCmd("/bin/sh", "-c", cmd)
-            .withEnv(
-                "NODE_ENV=development",
-                "CHOKIDAR_USEPOLLING=true",
-                "PORT=3001"
-            )
+            .withEnv(env.toArray(String[]::new))
             .withHostConfig(HostConfig.newHostConfig()
                 .withBinds(new Bind(VOLUME_NAME, new Volume("/projects"), AccessMode.rw, SELContext.none, true))
-                .withPortBindings(PortBinding.parse(port + ":3001"))
+                .withPortBindings(PortBinding.parse(port + ":" + VITE_INTERNAL_PORT))
                 .withNetworkMode(NETWORK)
                 .withRestartPolicy(RestartPolicy.noRestart()))
-            .withExposedPorts(ExposedPort.tcp(3001))
+            .withExposedPorts(ExposedPort.tcp(VITE_INTERNAL_PORT))
             .exec();
 
         docker.startContainerCmd(container.getId()).exec();
         return container.getId();
+    }
+
+    /** Parse a .env file into a key→value map. Lines starting with # are ignored. */
+    public Map<String, String> readEnvFile(Path envFile) {
+        Map<String, String> result = new java.util.LinkedHashMap<>();
+        if (!Files.exists(envFile)) return result;
+        try {
+            Files.readAllLines(envFile).forEach(line -> {
+                String trimmed = line.trim();
+                if (trimmed.isBlank() || trimmed.startsWith("#")) return;
+                int eq = trimmed.indexOf('=');
+                if (eq < 0) return;
+                String key = trimmed.substring(0, eq).trim();
+                String val = trimmed.substring(eq + 1).trim();
+                if (!key.isBlank()) result.put(key, val);
+            });
+        } catch (IOException e) {
+            log.warn("Could not read env file {}: {}", envFile, e.getMessage());
+        }
+        return result;
     }
 
     /** Get the last N lines of container logs. */
