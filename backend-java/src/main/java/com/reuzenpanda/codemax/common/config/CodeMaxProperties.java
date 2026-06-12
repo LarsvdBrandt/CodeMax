@@ -13,6 +13,15 @@ public class CodeMaxProperties {
     private String projectsDir;
     private String templatesDir;
     private String openaiApiKey;
+    private String anthropicApiKey;
+    private String geminiApiKey;
+    private String deepseekApiKey;
     private String corsAllowOrigins;
     private String mongoRootUrl;
+    private String plannerModel = "gpt-4o";
+    private String codeModel    = "gpt-4o";
+    private String reviewModel  = "gpt-4o";
+    // private String plannerModel = "gemini-2.5-pro";
+    // private String codeModel    = "claude-sonnet-4-5";
+    // private String reviewModel  = "claude-sonnet-4-5";
 }

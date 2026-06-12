@@ -42,6 +42,12 @@ codemax:
   projects-dir: ${PROJECTS_DIR:/projects}
   templates-dir: ${TEMPLATES_DIR:/templates}
   openai-api-key: ${OPENAI_API_KEY:}
+  anthropic-api-key: ${ANTHROPIC_API_KEY:}
+  gemini-api-key: ${GEMINI_API_KEY:}
+  deepseek-api-key: ${DEEPSEEK_API_KEY:}
+  planner-model: ${PLANNER_MODEL:gpt-4o}
+  code-model: ${CODE_MODEL:gpt-4o}
+  review-model: ${REVIEW_MODEL:gpt-4o}
   cors-allow-origins: ${CORS_ALLOW_ORIGINS:http://localhost:3000}
   mongo-root-url: ${MONGO_ROOT_URL:mongodb://codemax:codemax@localhost:27017}
 

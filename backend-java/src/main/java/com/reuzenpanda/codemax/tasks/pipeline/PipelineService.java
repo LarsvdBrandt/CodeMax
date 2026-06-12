@@ -1,9 +1,9 @@
 package com.reuzenpanda.codemax.tasks.pipeline;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.reuzenpanda.codemax.common.ai.AiRouter;
 import com.reuzenpanda.codemax.common.config.CodeMaxProperties;
 import com.reuzenpanda.codemax.common.docker.DockerService;
-import com.reuzenpanda.codemax.common.openai.OpenAiClient;
 import com.reuzenpanda.codemax.projects.entities.Project;
 import com.reuzenpanda.codemax.projects.entities.ProjectFile;
 import com.reuzenpanda.codemax.projects.entities.ProjectStatus;
@@ -13,6 +13,15 @@ import com.reuzenpanda.codemax.tasks.entities.AgentLogEntry;
 import com.reuzenpanda.codemax.tasks.entities.Task;
 import com.reuzenpanda.codemax.tasks.entities.TaskStatus;
 import com.reuzenpanda.codemax.tasks.repositories.ITaskRepository;
+import com.reuzenpanda.codemax.tasks.pipeline.engine.Patch;
+import com.reuzenpanda.codemax.tasks.pipeline.engine.PatchEngine;
+import com.reuzenpanda.codemax.tasks.pipeline.engine.TemplateKnowledgeBuilder;
+import com.reuzenpanda.codemax.tasks.pipeline.generators.*;
+import com.reuzenpanda.codemax.tasks.pipeline.memory.ProjectMemoryService;
+import com.reuzenpanda.codemax.tasks.pipeline.model.*;
+import com.reuzenpanda.codemax.tasks.pipeline.stages.ArchitectStage;
+import com.reuzenpanda.codemax.tasks.pipeline.stages.PlannerStage;
+import com.reuzenpanda.codemax.tasks.pipeline.stages.ReviewStage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.Resource;
@@ -43,26 +52,28 @@ public class PipelineService {
     private final ITaskRepository taskRepo;
     private final IProjectRepository projectRepo;
     private final IProjectFileRepository fileRepo;
-    private final OpenAiClient ai;
+    private final AiRouter aiRouter;
     private final DockerService docker;
     private final CodeMaxProperties props;
     private final ObjectMapper objectMapper;
     private final ResourcePatternResolver resourceLoader;
 
-    private static final int MAX_FIX_ROUNDS = 5;
+    // V3 pipeline components
+    private final TemplateKnowledgeBuilder knowledgeBuilder;
+    private final ArchitectStage architect;
+    private final PlannerStage planner;
+    private final ReviewStage reviewer;
+    private final ModelGenerator modelGen;
+    private final RouteGenerator routeGen;
+    private final TypeGenerator typeGen;
+    private final ServiceGenerator serviceGen;
+    private final PageGenerator pageGen;
+    private final NavigationGenerator navGen;
+    private final BrandingGenerator brandingGen;
+    private final ProjectMemoryService memory;
+    private final PatchEngine patchEngine;
 
-    record TemplateAnalysis(
-        String businessName,
-        String featureName,
-        String featurePlural,
-        String featureRoute,
-        List<Map<String, Object>> fields,
-        String accentColorRgb,
-        String appTagline,
-        String heroHeadline,
-        String heroSubheadline,
-        List<Map<String, String>> featuresList
-    ) {}
+    private static final int MAX_FIX_ROUNDS = 5;
 
     // ── Entry point ───────────────────────────────────────────────────────────
 
@@ -75,6 +86,7 @@ public class PipelineService {
             Path projectDir = Path.of(props.getProjectsDir(), projectId.toString());
             Map<String, String> answers = project.getAnswers() != null ? project.getAnswers() : Map.of();
 
+            // ── Infrastructure setup ──────────────────────────────────────────
             pipeLog(task, "seed_template", "running", "Seeding project template");
             seedTemplate(projectDir);
             pipeLog(task, "seed_template", "done", "Template copied");
@@ -85,41 +97,89 @@ public class PipelineService {
 
             applyViteProxy(projectDir);
 
-            String aiContext = loadFile(projectDir, "AI_CONTEXT.md");
-            String componentsCtx = loadFile(projectDir, "COMPONENTS.md");
+            // ── V3: Knowledge + Spec + Plan ───────────────────────────────────
+            pipeLog(task, "knowledge", "running", "Scanning template knowledge");
+            TemplateKnowledge knowledge = knowledgeBuilder.build(projectDir);
+            pipeLog(task, "knowledge", "done", knowledge.availableComponents().size() + " components found");
 
-            pipeLog(task, "analyze", "running", "Analyzing your request");
-            TemplateAnalysis analysis = analyzePrompt(aiContext, prompt, answers);
-            pipeLog(task, "analyze", "done", "Feature: " + analysis.featureName());
+            AppSpecification spec;
+            ExecutionPlan plan;
+            boolean isUpdate = memory.hasMemory(projectDir);
 
-            pipeLog(task, "backend_model", "running", "Generating " + analysis.featureName() + " model");
-            generateBackendModel(projectDir, aiContext, analysis, answers);
-            pipeLog(task, "backend_model", "done", "Model generated");
+            if (isUpdate) {
+                pipeLog(task, "architect", "running", "Merging with existing project spec");
+                AppSpecification existing = memory.loadSpecification(projectDir);
+                spec = architect.architectUpdate(prompt, answers, knowledge, existing);
+                plan = planner.planUpdate(spec, existing);
+                pipeLog(task, "architect", "done", "Update spec: " + spec.appName() + " — " + spec.entities().size() + " entities");
+            } else {
+                pipeLog(task, "architect", "running", "Analyzing your request");
+                spec = architect.architect(prompt, answers, knowledge);
+                plan = planner.plan(spec);
+                pipeLog(task, "architect", "done", "App: " + spec.appName() + " — entity: " +
+                    spec.entities().stream().map(EntitySpec::name).collect(Collectors.joining(", ")));
+            }
 
-            pipeLog(task, "backend_routes", "running", "Generating API routes");
-            generateBackendRoutes(projectDir, aiContext, analysis, answers);
-            pipeLog(task, "backend_routes", "done", "Routes generated");
+            // ── V3: Execute plan steps per entity ─────────────────────────────
+            List<String> generatedFiles = new ArrayList<>();
 
-            pipeLog(task, "route_index", "running", "Wiring routes");
-            updateRouteIndex(projectDir, analysis);
-            pipeLog(task, "route_index", "done", "Routes mounted");
+            for (EntitySpec entity : spec.entities()) {
+                pipeLog(task, "backend_model", "running", "Generating " + entity.name() + " model");
+                String modelCode = modelGen.generate(projectDir, spec, entity, knowledge);
+                generatedFiles.add("server/src/models/" + entity.name() + ".ts");
+                pipeLog(task, "backend_model", "done", "Model generated");
 
-            pipeLog(task, "frontend_types", "running", "Generating TypeScript types and service");
-            generateFrontendTypesAndService(projectDir, aiContext, analysis, answers);
-            pipeLog(task, "frontend_types", "done", "Types and service ready");
+                pipeLog(task, "backend_routes", "running", "Generating " + entity.plural() + " routes");
+                routeGen.generate(projectDir, spec, entity, knowledge);
+                generatedFiles.add("server/src/routes/" + entity.plural() + ".ts");
+                pipeLog(task, "backend_routes", "done", "Routes generated");
 
-            pipeLog(task, "frontend_page", "running", "Building " + analysis.featureName() + " page");
-            generateFeaturePage(projectDir, aiContext, componentsCtx, analysis, answers);
-            pipeLog(task, "frontend_page", "done", "Page generated");
+                pipeLog(task, "route_index", "running", "Wiring routes");
+                updateRouteIndex(projectDir, entity);
+                pipeLog(task, "route_index", "done", "Routes mounted");
 
-            pipeLog(task, "routing", "running", "Updating navigation");
-            updateAppAndNavbar(projectDir, analysis);
-            pipeLog(task, "routing", "done", "Navigation updated");
+                pipeLog(task, "frontend_types", "running", "Generating TypeScript types");
+                typeGen.generate(projectDir, spec, entity, knowledge);
+                generatedFiles.add("src/types/index.ts");
+                pipeLog(task, "frontend_types", "done", "Types generated");
+
+                pipeLog(task, "frontend_service", "running", "Generating " + entity.plural() + " service");
+                serviceGen.generate(projectDir, spec, entity, knowledge);
+                generatedFiles.add("src/services/" + entity.plural() + ".ts");
+                pipeLog(task, "frontend_service", "done", "Service generated");
+
+                pipeLog(task, "frontend_page", "running", "Building " + entity.name() + " page");
+                pageGen.generate(projectDir, spec, entity, knowledge);
+                generatedFiles.add("src/pages/" + entity.name() + "sPage.tsx");
+                pipeLog(task, "frontend_page", "done", "Page generated");
+
+                pipeLog(task, "routing", "running", "Updating navigation");
+                navGen.generate(projectDir, spec, entity);
+                pipeLog(task, "routing", "done", "Navigation updated");
+            }
 
             pipeLog(task, "branding", "running", "Applying branding");
-            generateContentFiles(projectDir, analysis, answers);
+            brandingGen.generate(projectDir, spec, answers);
+            generatedFiles.add("src/config/content.ts");
             pipeLog(task, "branding", "done", "Branding applied");
 
+            // ── V3: Review gate ───────────────────────────────────────────────
+            if (props.getReviewModel() != null && !props.getReviewModel().isBlank() && !spec.entities().isEmpty()) {
+                pipeLog(task, "review", "running", "Reviewing generated code");
+                EntitySpec primary = spec.entities().get(0);
+                Map<String, String> reviewFiles = reviewer.collectReviewFiles(projectDir, primary.plural());
+                List<Patch> fixes = reviewer.review(spec, reviewFiles);
+                if (!fixes.isEmpty()) {
+                    pipeLog(task, "review", "running", "Applying " + fixes.size() + " review fix(es)");
+                    patchEngine.apply(projectDir, fixes);
+                }
+                pipeLog(task, "review", "done", "Review complete");
+            }
+
+            // ── V3: Save memory ───────────────────────────────────────────────
+            memory.save(projectDir, spec, plan, knowledge, generatedFiles, prompt);
+
+            // ── Build Docker container ────────────────────────────────────────
             pipeLog(task, "build", "running", "Starting preview container");
             Map<String, String> envVars = buildContainerEnv(projectDir);
             DockerService.PreviewResult preview = docker.provisionPreview(projectId, project.getContainerId(), envVars);
@@ -128,7 +188,6 @@ public class PipelineService {
             projectRepo.save(project);
             pipeLog(task, "build", "running", "Container started on port " + preview.port());
 
-            int port = preview.port();
             String containerId = preview.containerId();
             boolean ready = false;
             for (int round = 0; round < MAX_FIX_ROUNDS && !ready; round++) {
@@ -142,7 +201,7 @@ public class PipelineService {
                 }
                 if (hasErrors(errorLog)) {
                     pipeLog(task, "autofix", "running", "Fixing errors (round " + (round + 1) + ")");
-                    fixErrors(projectDir, errorLog, aiContext, componentsCtx);
+                    fixErrors(projectDir, errorLog, knowledge);
                 }
             }
 
@@ -150,7 +209,7 @@ public class PipelineService {
             projectRepo.save(project);
             task.setStatus(TaskStatus.done);
             taskRepo.save(task);
-            pipeLog(task, "done", "done", "Build complete — preview on port " + port);
+            pipeLog(task, "done", "done", "Build complete — preview on port " + preview.port());
 
             docker.writeNginxConfig(projectId, "/etc/nginx/conf.d");
 
@@ -262,435 +321,84 @@ public class PipelineService {
         Files.writeString(projectDir.resolve("vite.config.ts"), content);
     }
 
-    // ── Step 4: Analyze ───────────────────────────────────────────────────────
+    // ── Route index: deterministic string patch ───────────────────────────────
 
-    @SuppressWarnings("unchecked")
-    private TemplateAnalysis analyzePrompt(String aiContext, String prompt,
-                                            Map<String, String> answers) {
-        String userColor  = answers.getOrDefault("primary_color", "");
-        String userTone   = answers.getOrDefault("tone", "");
-        String userAudience = answers.getOrDefault("audience", "");
-        String userTagline  = answers.getOrDefault("tagline", "");
-        String brandCtx   = brandingContext(answers);
-
-        String sys = systemPrompt(aiContext, "") + """
-
-            Analyze the user's request and return JSON:
-            {
-              "feature_name": "Task",
-              "feature_plural": "tasks",
-              "feature_route": "/tasks",
-              "fields": [{"name": "title", "type": "string", "required": true}],
-              "accent_color_rgb": "99 102 241",
-              "app_tagline": "...",
-              "hero_headline": "...",
-              "hero_subheadline": "...",
-              "features_list": [{"icon": "Zap", "title": "...", "description": "..."}]
-            }
-            feature_name: PascalCase singular. feature_plural: lowercase plural.
-            accent_color_rgb: RGB triple without commas — MUST match the brand color if provided.
-            app_tagline / hero_headline / hero_subheadline: use the user's tagline as the primary source.
-            icon: valid lucide-react icon name.
-            Generate compelling copy for ALL text fields — tone must match the specified app vibe.
-            """;
-        String enrichedPrompt = brandCtx.isBlank() ? prompt
-            : prompt + "\n\n---\nBranding context:\n" + brandCtx;
-        try {
-            Map<String, Object> r = objectMapper.readValue(ai.chatJson(sys, enrichedPrompt), Map.class);
-            // User-specified values always win over AI-generated ones
-            String color = userColor.isBlank() ? str(r, "accent_color_rgb", "99 102 241") : userColor;
-            String tagline = userTagline.isBlank() ? str(r, "app_tagline", "") : userTagline;
-            String bizName = answers.getOrDefault("business_name", "My App");
-            return new TemplateAnalysis(
-                bizName,
-                str(r, "feature_name", "Item"),
-                str(r, "feature_plural", "items"),
-                str(r, "feature_route", "/dashboard"),
-                (List<Map<String, Object>>) r.getOrDefault("fields", List.of()),
-                color,
-                tagline,
-                str(r, "hero_headline", ""),
-                str(r, "hero_subheadline", ""),
-                (List<Map<String, String>>) r.getOrDefault("features_list", List.of())
-            );
-        } catch (Exception e) {
-            log.warn("Analysis parse failed: {}", e.getMessage());
-            String bizName = answers.getOrDefault("business_name", "My App");
-            return new TemplateAnalysis(bizName, "Item", "items", "/dashboard",
-                List.of(), userColor.isBlank() ? "99 102 241" : userColor,
-                userTagline, "", "", List.of());
+    private void updateRouteIndex(Path projectDir, EntitySpec entity) throws IOException {
+        Path indexPath = projectDir.resolve("server/src/routes/index.ts");
+        if (!Files.exists(indexPath)) {
+            log.warn("updateRouteIndex: server/src/routes/index.ts not found");
+            return;
         }
-    }
+        String content = Files.readString(indexPath);
 
-    // ── Step 5: Backend Mongoose model ────────────────────────────────────────
+        // Remove todos references and inject entity routes
+        String updated = content
+            .replaceAll("import todosRouter from '\\./todos'[\\r\\n]*", "")
+            .replaceAll("router\\.use\\('/todos',\\s*todosRouter\\)[\\r\\n]*", "");
 
-    private void generateBackendModel(Path projectDir, String aiContext,
-                                       TemplateAnalysis a, Map<String, String> answers) throws IOException {
-        String todoRef = loadFile(projectDir, "server/src/models/Todo.ts");
-        String sys = systemPrompt(aiContext, "") + """
+        String plural = entity.plural();
+        String importLine = "import " + plural + "Router from './" + plural + "'";
+        String useLine    = "router.use('/" + plural + "', " + plural + "Router)";
 
-            Generate a Mongoose TypeScript model following the exact pattern of the reference.
-            - Interface I%s extends Document with all fields + timestamps
-            - userId: Types.ObjectId required, indexed
-            - timestamps: true in schema options
-            Return ONLY the TypeScript file content, no markdown fences.
-            """.formatted(a.featureName());
-        String content = stripFences(ai.chat(sys,
-            "Feature: " + a.featureName() + " (" + a.featurePlural() + ")\n" +
-            "Fields: " + a.fields() + "\n\nReference Todo model:\n" + todoRef));
-        save(projectDir, "server/src/models/" + a.featureName() + ".ts", content);
-        Files.deleteIfExists(projectDir.resolve("server/src/models/Todo.ts"));
-    }
-
-    // ── Step 6: Backend Express routes ───────────────────────────────────────
-
-    private void generateBackendRoutes(Path projectDir, String aiContext,
-                                        TemplateAnalysis a, Map<String, String> answers) throws IOException {
-        String todoRef = loadFile(projectDir, "server/src/routes/todos.ts");
-        String sys = systemPrompt(aiContext, "") + """
-
-            Generate a complete Express router following the todos.ts pattern exactly.
-            - Import and use the %s model (not Todo)
-            - All queries must include { userId: req.user._id }
-            - Full CRUD: GET /, POST /, GET /:id, PUT /:id, DELETE /:id
-            - Use authenticate middleware on all routes
-            Return ONLY the TypeScript file content, no markdown fences.
-            """.formatted(a.featureName());
-        String content = stripFences(ai.chat(sys,
-            "Feature: " + a.featureName() + " (" + a.featurePlural() + ")\n" +
-            "Fields: " + a.fields() + "\n\nReference todos router:\n" + todoRef));
-        save(projectDir, "server/src/routes/" + a.featurePlural() + ".ts", content);
-        Files.deleteIfExists(projectDir.resolve("server/src/routes/todos.ts"));
-    }
-
-    // ── Step 7: Server route index ────────────────────────────────────────────
-
-    private void updateRouteIndex(Path projectDir, TemplateAnalysis a) throws IOException {
-        String current = loadFile(projectDir, "server/src/routes/index.ts");
-        String sys = """
-            Update this Express route index file:
-            1. Remove the todos import and router.use('/todos', ...) line
-            2. Add: import %sRouter from './%s'  and  router.use('/%s', %sRouter)
-            Keep all other routes identical. Return ONLY the complete TypeScript file, no fences.
-            """.formatted(a.featurePlural(), a.featurePlural(), a.featurePlural(), a.featurePlural());
-        save(projectDir, "server/src/routes/index.ts", stripFences(ai.chat(sys, current)));
-    }
-
-    // ── Step 8: Frontend types + api config + service ─────────────────────────
-
-    private void generateFrontendTypesAndService(Path projectDir, String aiContext,
-                                                   TemplateAnalysis a, Map<String, String> answers) throws IOException {
-        // types/index.ts
-        String curTypes = loadFile(projectDir, "src/types/index.ts");
-        String typesSys = systemPrompt(aiContext, "") + """
-
-            Update this types file:
-            1. Add %s, Create%sPayload, Update%sPayload interfaces from the fields
-            2. Remove Todo, TodoPriority, CreateTodoPayload, UpdateTodoPayload
-            Keep User, AuthTokens, ApiResponse, ApiError and all other types.
-            Return ONLY the complete TypeScript file, no fences.
-            """.formatted(a.featureName(), a.featureName(), a.featureName());
-        save(projectDir, "src/types/index.ts", stripFences(ai.chat(typesSys,
-            "Feature: " + a.featureName() + "\nFields: " + a.fields() +
-            "\n\nCurrent src/types/index.ts:\n" + curTypes)));
-
-        // config/api.ts
-        String curApi = loadFile(projectDir, "src/config/api.ts");
-        String apiSys = systemPrompt(aiContext, "") + """
-
-            Update src/config/api.ts:
-            1. Remove todo/todos endpoint entries
-            2. Add: %s: '/api/%s' and %s: (id: string) => '/api/%s/' + id
-            Return ONLY the complete TypeScript file, no fences.
-            """.formatted(a.featurePlural(), a.featurePlural(),
-                          a.featureName().toLowerCase(), a.featurePlural());
-        save(projectDir, "src/config/api.ts", stripFences(ai.chat(apiSys,
-            "Current src/config/api.ts:\n" + curApi)));
-
-        // services/{plural}.ts
-        String curService = loadFile(projectDir, "src/services/todos.ts");
-        String svcSys = systemPrompt(aiContext, "") + """
-
-            Generate a frontend service file for the %s resource.
-            Follow the exact todos.ts pattern. Use the new endpoint keys from api.ts.
-            Return ONLY the complete TypeScript file, no fences.
-            """.formatted(a.featureName());
-        save(projectDir, "src/services/" + a.featurePlural() + ".ts", stripFences(ai.chat(svcSys,
-            "Feature: " + a.featureName() + " (" + a.featurePlural() + ")\n" +
-            "Fields: " + a.fields() + "\n\nReference todos service:\n" + curService)));
-        Files.deleteIfExists(projectDir.resolve("src/services/todos.ts"));
-    }
-
-    // ── Step 9: Feature page ──────────────────────────────────────────────────
-
-    private void generateFeaturePage(Path projectDir, String aiContext, String componentsCtx,
-                                      TemplateAnalysis a, Map<String, String> answers) throws IOException {
-        String dashRef = loadFile(projectDir, "src/pages/Dashboard.tsx");
-        String sys = systemPrompt(aiContext, componentsCtx) + """
-
-            Generate a complete React TSX page for the %s feature.
-            Strictly follow the structural pattern of Dashboard.tsx (imports, Framer Motion, auth guard).
-            Requirements:
-            - Full CRUD: list, create (Modal + form), edit (Modal + form), delete (confirm)
-            - Use ONLY '@/components/ui' components: Button, Input, Modal, Badge, EmptyState, useToast, Skeleton
-            - Framer Motion AnimatePresence + motion.div for list items
-            - useAuth hook for current user
-            - Loading state: Skeleton; empty state: EmptyState with create CTA
-            - Errors: toast.error(); success: toast.success()
-            - Strict TypeScript, no 'any'
-            - MongoDB items use _id (not id) — always access item._id, never item.id
-            - NEVER use useNavigate() or navigate() — do NOT navigate after create/edit/delete
-            - After create: add item to local state array, show toast, close modal
-            - After edit: update item in local state array, show toast, close modal
-            - After delete: remove item from local state array, show toast
-            Return ONLY the complete TSX file, no markdown fences.
-            """.formatted(a.featureName());
-        String content = stripFences(ai.chat(sys,
-            "Feature: " + a.featureName() + " (" + a.featurePlural() + ")\n" +
-            "Fields: " + a.fields() + "\nRoute: " + a.featureRoute() +
-            "\n\nReference Dashboard.tsx:\n" + dashRef));
-        save(projectDir, "src/pages/" + a.featureName() + "Page.tsx", content);
-        Files.deleteIfExists(projectDir.resolve("src/pages/Dashboard.tsx"));
-    }
-
-    // ── Step 10: App.tsx + Navbar ─────────────────────────────────────────────
-
-    private void updateAppAndNavbar(Path projectDir, TemplateAnalysis a) throws IOException {
-        String curApp = loadFile(projectDir, "src/App.tsx");
-        String appSys = """
-            Update src/App.tsx:
-            1. Replace Dashboard lazy import with: const %sPage = lazy(() => import('@/pages/%sPage'))
-            2. Replace the /dashboard route element with <%sPage /> at path "%s"
-            Keep all other routes and imports identical. Return ONLY the complete file, no fences.
-            """.formatted(a.featureName(), a.featureName(), a.featureName(), a.featureRoute());
-        save(projectDir, "src/App.tsx", stripFences(ai.chat(appSys, curApp)));
-
-        String curNav = loadFile(projectDir, "src/components/layout/Navbar.tsx");
-        if (!curNav.isBlank()) {
-            // Direct string replace is more reliable than AI for two simple substitutions
-            String updatedNav = curNav
-                // Replace hardcoded brand name with env var
-                .replace(">AppTemplate<", ">{import.meta.env.VITE_APP_NAME ?? 'AppTemplate'}<")
-                // Replace the 'Work' home-page scroll entry with the feature page route
-                .replace("{ label: 'Work',     section: 'work'     }",
-                    "{ label: '" + a.featureName() + "', href: '" + a.featureRoute() + "' }")
-                .replace("{ label: 'Work', section: 'work' }",
-                    "{ label: '" + a.featureName() + "', href: '" + a.featureRoute() + "' }");
-            // If the simple replace didn't update the nav route, fall back to AI
-            if (updatedNav.contains("section: 'work'")) {
-                String navSys = """
-                    Update the NAV_ITEMS (or equivalent) array in Navbar.tsx to replace any Dashboard/work entry
-                    with: { label: '%s', href: '%s' } (use whatever shape the existing items use).
-                    Also replace any hardcoded 'AppTemplate' text with: {import.meta.env.VITE_APP_NAME ?? 'AppTemplate'}
-                    Keep all other nav items identical. Return ONLY the complete file, no fences.
-                    """.formatted(a.featureName(), a.featureRoute());
-                save(projectDir, "src/components/layout/Navbar.tsx", stripFences(ai.chat(navSys, curNav)));
+        if (!updated.contains(importLine)) {
+            // Insert import after the last existing import line
+            int lastImport = updated.lastIndexOf("import ");
+            if (lastImport >= 0) {
+                int eol = updated.indexOf('\n', lastImport);
+                updated = updated.substring(0, eol + 1) + importLine + "\n" + updated.substring(eol + 1);
             } else {
-                save(projectDir, "src/components/layout/Navbar.tsx", updatedNav);
-            }
-        }
-    }
-
-    // ── Step 11: Branding ─────────────────────────────────────────────────────
-
-    private void updateBranding(Path projectDir, String aiContext, TemplateAnalysis a,
-                                 Map<String, String> answers) throws IOException {
-        if (!a.accentColorRgb().isBlank()) {
-            String rgb = a.accentColorRgb();
-            // theme.ts — read by main.tsx at runtime to inject CSS custom properties
-            String theme = loadFile(projectDir, "src/config/theme.ts");
-            if (!theme.isBlank()) {
-                save(projectDir, "src/config/theme.ts",
-                    theme.replaceAll("accent:\\s*'[0-9 ]+'", "accent: '" + rgb + "'"));
-            }
-            // globals.css — also update the static fallback so SSR/initial paint is correct
-            String css = loadFile(projectDir, "src/styles/globals.css");
-            if (!css.isBlank()) {
-                save(projectDir, "src/styles/globals.css",
-                    css.replaceAll("--color-accent:\\s*[0-9 ]+;", "--color-accent: " + rgb + ";"));
+                updated = importLine + "\n" + updated;
             }
         }
 
-        if (!a.heroHeadline().isBlank()) {
-            String heroFile = loadFile(projectDir, "src/sections/HeroSection.tsx");
-            if (!heroFile.isBlank()) {
-                String sys = systemPrompt(aiContext, "") + """
-                    Update only the headline, subheadline, and tagline text in this HeroSection.
-                    Keep all JSX structure, classNames, and Framer Motion animations identical.
-                    Return ONLY the complete file, no fences.
-                    """;
-                save(projectDir, "src/sections/HeroSection.tsx", stripFences(ai.chat(sys,
-                    "headline: " + a.heroHeadline() + "\nsubheadline: " + a.heroSubheadline() +
-                    "\ntagline: " + a.appTagline() + "\n\nCurrent file:\n" + heroFile)));
+        if (!updated.contains(useLine)) {
+            // Insert before the last export/module.exports line, or append
+            int exportIdx = updated.lastIndexOf("export default");
+            if (exportIdx >= 0) {
+                updated = updated.substring(0, exportIdx) + useLine + "\n\n" + updated.substring(exportIdx);
+            } else {
+                updated = updated + "\n" + useLine + "\n";
             }
         }
 
-        if (!a.featuresList().isEmpty()) {
-            String featFile = loadFile(projectDir, "src/sections/FeaturesSection.tsx");
-            if (!featFile.isBlank()) {
-                String sys = systemPrompt(aiContext, "") + """
-                    Replace the FEATURES array in FeaturesSection.tsx with the provided list.
-                    Use lucide-react icons by name. Keep all JSX and animations identical.
-                    Return ONLY the complete file, no fences.
-                    """;
-                save(projectDir, "src/sections/FeaturesSection.tsx", stripFences(ai.chat(sys,
-                    "New features: " + a.featuresList() + "\n\nCurrent file:\n" + featFile)));
-            }
-        }
-    }
-
-    // ── Step 11b: Generate content.ts files (replaces updateBranding AI edits) ──
-
-    private void generateContentFiles(Path projectDir, TemplateAnalysis a,
-                                       Map<String, String> answers) throws IOException {
-        String name        = escapeTs(a.businessName().isBlank() ? answers.getOrDefault("business_name", "My App") : a.businessName());
-        String tagline     = escapeTs(a.appTagline().isBlank()   ? "Your tagline here." : a.appTagline());
-        String color       = a.accentColorRgb().isBlank()        ? "99 102 241"         : a.accentColorRgb();
-        String headline    = escapeTs(a.heroHeadline().isBlank()    ? "Your headline here." : a.heroHeadline());
-        String subheadline = escapeTs(a.heroSubheadline().isBlank() ?
-            "A short sentence explaining what the app does and who it is for." : a.heroSubheadline());
-        String contactEmail = escapeTs(answers.getOrDefault("contact_email", "hello@example.com"));
-
-        StringBuilder featItems = new StringBuilder();
-        if (a.featuresList().isEmpty()) {
-            featItems.append(
-                "      { icon: 'Zap',      title: 'Feature one',   description: 'Short benefit statement for feature one.'   },\n" +
-                "      { icon: 'Shield',   title: 'Feature two',   description: 'Short benefit statement for feature two.'   },\n" +
-                "      { icon: 'Globe',    title: 'Feature three', description: 'Short benefit statement for feature three.' },\n" +
-                "      { icon: 'Sparkles', title: 'Feature four',  description: 'Short benefit statement for feature four.'  },\n" +
-                "      { icon: 'Lock',     title: 'Feature five',  description: 'Short benefit statement for feature five.'  },\n" +
-                "      { icon: 'Palette',  title: 'Feature six',   description: 'Short benefit statement for feature six.'   },\n");
-        } else {
-            for (Map<String, String> f : a.featuresList()) {
-                featItems.append("      { icon: '").append(escapeTs(f.getOrDefault("icon", "Zap")))
-                         .append("', title: '").append(escapeTs(f.getOrDefault("title", "Feature")))
-                         .append("', description: '").append(escapeTs(f.getOrDefault("description", "Feature description.")))
-                         .append("' },\n");
-            }
-        }
-
-        String contentTs =
-            "// GENERATED by the CodeMax pipeline — edit freely to customise the app copy.\n" +
-            "// All user-facing text and the accent color live here.\n" +
-            "// Accent color is an RGB triple (no commas, e.g. '20 184 166' for teal).\n\n" +
-            "export const CONTENT = {\n" +
-            "  brand: {\n" +
-            "    name:        '" + name    + "',\n" +
-            "    tagline:     '" + tagline + "',\n" +
-            "    accentColor: '" + color   + "',\n" +
-            "  },\n" +
-            "  hero: {\n" +
-            "    badge:        '\\u2726 " + name + " — Now available',\n" +
-            "    headline:     '" + headline    + "',\n" +
-            "    subheadline:  '" + subheadline + "',\n" +
-            "    ctaPrimary:   'Get started free',\n" +
-            "    ctaSecondary: 'See how it works',\n" +
-            "    footnote:     'No credit card required.',\n" +
-            "  },\n" +
-            "  features: {\n" +
-            "    label:    'Features',\n" +
-            "    title:    'Everything you need.',\n" +
-            "    subtitle: '" + tagline + "',\n" +
-            "    items: [\n" +
-            featItems +
-            "    ],\n" +
-            "  },\n" +
-            "  about: {\n" +
-            "    label:       'About',\n" +
-            "    title:       'Built for you.',\n" +
-            "    description: '" + tagline + "',\n" +
-            "    stats: [\n" +
-            "      { value: '\\u2014', label: 'Stat one'   },\n" +
-            "      { value: '\\u2014', label: 'Stat two'   },\n" +
-            "      { value: '\\u2014', label: 'Stat three' },\n" +
-            "      { value: '\\u2014', label: 'Stat four'  },\n" +
-            "    ],\n" +
-            "    bullets: [\n" +
-            "      'Key benefit or differentiator one',\n" +
-            "      'Key benefit or differentiator two',\n" +
-            "      'Key benefit or differentiator three',\n" +
-            "      'Key benefit or differentiator four',\n" +
-            "    ],\n" +
-            "  },\n" +
-            "  work: {\n" +
-            "    label:    'Work',\n" +
-            "    title:    'How it works',\n" +
-            "    subtitle: 'Replace these cards with your own case studies or use-case examples.',\n" +
-            "    projects: [\n" +
-            "      { tag: 'Step 1', name: 'Sign up',  description: 'Create your account in seconds.',         year: '' },\n" +
-            "      { tag: 'Step 2', name: 'Set up',   description: 'Connect your data or configure the app.', year: '' },\n" +
-            "      { tag: 'Step 3', name: 'Ship it',  description: 'Go live and start seeing results.',       year: '' },\n" +
-            "    ],\n" +
-            "  },\n" +
-            "  contact: {\n" +
-            "    label:    'Contact',\n" +
-            "    title:    'Get in touch',\n" +
-            "    subtitle: \"Have a question or want to work together? Fill in the form and we'll get back to you.\",\n" +
-            "    email:    '" + contactEmail + "',\n" +
-            "    location: 'Your City, Country',\n" +
-            "    hours:    'Mon\\u2013Fri, 9 am\\u20136 pm',\n" +
-            "    success:  \"Message sent! We'll reply within 1 business day.\",\n" +
-            "  },\n" +
-            "  testimonials: {\n" +
-            "    label: 'Testimonials',\n" +
-            "    title: 'What people are saying',\n" +
-            "    items: [\n" +
-            "      { quote: 'Replace this with a real customer quote about your product.', author: 'First Last', role: 'Role, Company' },\n" +
-            "      { quote: 'Replace this with a real customer quote about your product.', author: 'First Last', role: 'Role, Company' },\n" +
-            "      { quote: 'Replace this with a real customer quote about your product.', author: 'First Last', role: 'Role, Company' },\n" +
-            "    ],\n" +
-            "  },\n" +
-            "  footer: {\n" +
-            "    tagline:    '" + tagline + "',\n" +
-            "    bottomNote: 'Built with React + Tailwind CSS',\n" +
-            "  },\n" +
-            "} as const\n";
-
-        save(projectDir, "src/config/content.ts", contentTs);
-
-        String serverContentTs =
-            "// GENERATED by the CodeMax pipeline.\n" +
-            "export const CONTENT = {\n" +
-            "  brand: {\n" +
-            "    name:    '" + name    + "',\n" +
-            "    tagline: '" + tagline + "',\n" +
-            "  },\n" +
-            "} as const\n";
-        save(projectDir, "server/src/config/content.ts", serverContentTs);
-
-        // Still patch globals.css for the initial paint before JS injects the CSS var
-        String css = loadFile(projectDir, "src/styles/globals.css");
-        if (!css.isBlank()) {
-            save(projectDir, "src/styles/globals.css",
-                css.replaceAll("--color-accent:\\s*[0-9 ]+;", "--color-accent: " + color + ";"));
-        }
-    }
-
-    private String escapeTs(String s) {
-        return s == null ? "" : s.replace("\\", "\\\\").replace("'", "\\'");
+        Files.writeString(indexPath, updated);
+        save(projectDir, "server/src/routes/index.ts", updated);
     }
 
     // ── Auto-fix ──────────────────────────────────────────────────────────────
 
     @SuppressWarnings("unchecked")
-    private void fixErrors(Path projectDir, String errorLog, String aiContext,
-                            String componentsCtx) {
+    private void fixErrors(Path projectDir, String errorLog, TemplateKnowledge knowledge) {
         Map<String, String> files = new LinkedHashMap<>();
-        collectTsFiles(projectDir.resolve("src"), projectDir, files, 8);
-        collectTsFiles(projectDir.resolve("server/src"), projectDir, files, 4);
 
-        String sys = systemPrompt(aiContext, componentsCtx) + """
+        // Targeted: extract file paths mentioned in the error log first
+        List<String> mentioned = extractMentionedFiles(errorLog);
+        for (String rel : mentioned) {
+            Path p = projectDir.resolve(rel);
+            if (Files.exists(p)) {
+                try { files.put(rel, Files.readString(p)); }
+                catch (IOException ignored) {}
+            }
+        }
 
-            Fix the TypeScript compilation/import errors in the provided files.
-            Return JSON: {"files": {"relative/path.ts": "fixed content", ...}}
-            Only include files that need changes. No markdown fences inside file content.
-            """;
+        // Fill up to 8 src files and 4 server files if we haven't hit enough context
+        if (files.size() < 4) {
+            collectTsFiles(projectDir.resolve("src"), projectDir, files, 8);
+            collectTsFiles(projectDir.resolve("server/src"), projectDir, files, 4);
+        }
+
+        String sys = GeneratorPrompts.PREAMBLE + "\n" +
+            "Fix the TypeScript compilation/import errors in the provided files.\n" +
+            "Return JSON: {\"files\": {\"relative/path.ts\": \"fixed content\", ...}}\n" +
+            "Only include files that need changes. No markdown fences inside file content.\n";
+
         String userMsg = "Errors:\n" + errorLog + "\n\nFiles:\n" +
             files.entrySet().stream()
                 .map(e -> "// " + e.getKey() + "\n" + e.getValue())
                 .collect(Collectors.joining("\n\n"));
         try {
-            Map<String, Object> result = objectMapper.readValue(ai.chatJson(sys, userMsg), Map.class);
+            Map<String, Object> result = objectMapper.readValue(
+                aiRouter.chatJson(props.getCodeModel(), sys, userMsg), Map.class);
             Map<String, String> fixed = (Map<String, String>) result.get("files");
             if (fixed != null) {
                 fixed.forEach((path, content) -> {
@@ -703,6 +411,19 @@ public class PipelineService {
         }
     }
 
+    private List<String> extractMentionedFiles(String errorLog) {
+        List<String> files = new ArrayList<>();
+        // Match paths like src/... or server/src/...
+        java.util.regex.Matcher m =
+            java.util.regex.Pattern.compile("(?:src|server/src)/[^:\\s'\"]+\\.(?:ts|tsx)").matcher(errorLog);
+        Set<String> seen = new LinkedHashSet<>();
+        while (m.find()) {
+            String path = m.group();
+            if (seen.add(path)) files.add(path);
+        }
+        return files;
+    }
+
     private void collectTsFiles(Path dir, Path base, Map<String, String> out, int limit) {
         if (!Files.exists(dir)) return;
         try (Stream<Path> walk = Files.walk(dir)) {
@@ -710,8 +431,10 @@ public class PipelineService {
                     && !p.toString().contains("node_modules"))
                 .limit(limit)
                 .forEach(p -> {
-                    try { out.put(base.relativize(p).toString(), Files.readString(p)); }
-                    catch (IOException ignored) {}
+                    try {
+                        String key = base.relativize(p).toString();
+                        out.putIfAbsent(key, Files.readString(p));
+                    } catch (IOException ignored) {}
                 });
         } catch (IOException e) {
             log.warn("collectTsFiles failed: {}", e.getMessage());
@@ -719,36 +442,6 @@ public class PipelineService {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private String brandingContext(Map<String, String> answers) {
-        if (answers == null || answers.isEmpty()) return "";
-        StringBuilder sb = new StringBuilder();
-        if (!answers.getOrDefault("business_name", "").isBlank())
-            sb.append("Business/App name: ").append(answers.get("business_name")).append("\n");
-        if (!answers.getOrDefault("tone", "").isBlank())
-            sb.append("App vibe/tone: ").append(answers.get("tone")).append("\n");
-        if (!answers.getOrDefault("audience", "").isBlank())
-            sb.append("Target audience: ").append(answers.get("audience")).append("\n");
-        if (!answers.getOrDefault("tagline", "").isBlank())
-            sb.append("Tagline: ").append(answers.get("tagline")).append("\n");
-        if (!answers.getOrDefault("primary_color", "").isBlank())
-            sb.append("Brand color (RGB): ").append(answers.get("primary_color")).append("\n");
-        return sb.toString().trim();
-    }
-
-    private String systemPrompt(String aiContext, String componentsCtx) {
-        StringBuilder sb = new StringBuilder(
-            "You are an expert TypeScript + React + Express developer working on this template:\n\n");
-        if (!aiContext.isBlank()) {
-            String truncated = aiContext.length() > 8000 ? aiContext.substring(0, 8000) + "\n...(truncated)" : aiContext;
-            sb.append(truncated).append("\n\n");
-        }
-        if (!componentsCtx.isBlank()) {
-            String truncated = componentsCtx.length() > 4000 ? componentsCtx.substring(0, 4000) + "\n...(truncated)" : componentsCtx;
-            sb.append("Component library:\n").append(truncated).append("\n\n");
-        }
-        return sb.toString();
-    }
 
     private Map<String, String> buildContainerEnv(Path projectDir) {
         Map<String, String> merged = new LinkedHashMap<>();
@@ -801,11 +494,6 @@ public class PipelineService {
         return HexFormat.of().formatHex(bytes);
     }
 
-    private String str(Map<String, Object> map, String key, String def) {
-        Object v = map.get(key);
-        return v instanceof String s ? s : def;
-    }
-
     @Transactional
     protected void markRunning(Task task, Project project, String prompt) {
         task.setStatus(TaskStatus.running);
@@ -827,7 +515,6 @@ public class PipelineService {
     private boolean isHealthy(String containerName) {
         try {
             HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
-            // Reach preview container by name + internal Vite port on codemax_network
             URI uri = URI.create("http://" + containerName + ":" + DockerService.VITE_INTERNAL_PORT);
             HttpRequest req = HttpRequest.newBuilder(uri).GET().build();
             return client.send(req, HttpResponse.BodyHandlers.discarding()).statusCode() < 500;
