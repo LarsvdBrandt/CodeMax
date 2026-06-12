@@ -1,0 +1,22 @@
+export type {{EntityName}}Status = {{statusValues}}
+
+export interface I{{EntityName}} {
+  _id: string
+  title: string
+  description: string
+  status: {{EntityName}}Status
+  priority: 'low' | 'medium' | 'high'
+{{tsDefs}}
+  userId: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface Create{{EntityName}}Request {
+  title: string
+  description?: string
+  status?: {{EntityName}}Status
+  priority?: 'low' | 'medium' | 'high'
+}
+
+export type Update{{EntityName}}Request = Partial<Create{{EntityName}}Request>

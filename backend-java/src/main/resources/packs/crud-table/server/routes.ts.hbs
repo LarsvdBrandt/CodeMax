@@ -1,0 +1,73 @@
+import { Router } from 'express'
+import { authenticate } from '../middleware/authenticate'
+import { {{EntityName}} } from '../models/{{EntityName}}'
+import { IUser } from '../models/User'
+import { Types } from 'mongoose'
+
+const router = Router()
+
+router.use(authenticate)
+
+// GET /api/{{entities}}
+router.get('/', async (req, res, next) => {
+  try {
+    const userId = (req.user as IUser)._id as Types.ObjectId
+    const items = await {{EntityName}}.find({ userId }).sort({ createdAt: -1 })
+    res.json(items)
+  } catch (err) {
+    next(err)
+  }
+})
+
+// POST /api/{{entities}}
+router.post('/', async (req, res, next) => {
+  try {
+    const userId = (req.user as IUser)._id as Types.ObjectId
+    const item = await {{EntityName}}.create({ ...req.body, userId })
+    res.status(201).json(item)
+  } catch (err) {
+    next(err)
+  }
+})
+
+// GET /api/{{entities}}/:id
+router.get('/:id', async (req, res, next) => {
+  try {
+    const userId = (req.user as IUser)._id as Types.ObjectId
+    const item = await {{EntityName}}.findOne({ _id: req.params.id, userId })
+    if (!item) return res.status(404).json({ message: 'Not found' })
+    res.json(item)
+  } catch (err) {
+    next(err)
+  }
+})
+
+// PUT /api/{{entities}}/:id
+router.put('/:id', async (req, res, next) => {
+  try {
+    const userId = (req.user as IUser)._id as Types.ObjectId
+    const item = await {{EntityName}}.findOneAndUpdate(
+      { _id: req.params.id, userId },
+      req.body,
+      { new: true, runValidators: true }
+    )
+    if (!item) return res.status(404).json({ message: 'Not found' })
+    res.json(item)
+  } catch (err) {
+    next(err)
+  }
+})
+
+// DELETE /api/{{entities}}/:id
+router.delete('/:id', async (req, res, next) => {
+  try {
+    const userId = (req.user as IUser)._id as Types.ObjectId
+    const item = await {{EntityName}}.findOneAndDelete({ _id: req.params.id, userId })
+    if (!item) return res.status(404).json({ message: 'Not found' })
+    res.json({ message: 'Deleted' })
+  } catch (err) {
+    next(err)
+  }
+})
+
+export default router

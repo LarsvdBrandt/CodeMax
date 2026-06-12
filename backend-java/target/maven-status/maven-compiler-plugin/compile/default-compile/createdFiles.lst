@@ -3,6 +3,7 @@ com/reuzenpanda/codemax/projects/dtos/ProjectFileDto.class
 com/reuzenpanda/codemax/tasks/pipeline/generators/ServiceGenerator.class
 com/reuzenpanda/codemax/projects/entities/Project.class
 com/reuzenpanda/codemax/common/docker/DockerService$PreviewResult.class
+com/reuzenpanda/codemax/tasks/pipeline/packs/PackMetadata.class
 com/reuzenpanda/codemax/projects/repositories/ProjectFileRepository.class
 com/reuzenpanda/codemax/tasks/entities/Task.class
 com/reuzenpanda/codemax/tasks/pipeline/PipelineService.class
@@ -34,6 +35,7 @@ com/reuzenpanda/codemax/auth/repositories/IUserApiKeyRepository.class
 com/reuzenpanda/codemax/projects/mappers/ProjectMapper.class
 com/reuzenpanda/codemax/common/config/CodeMaxProperties.class
 com/reuzenpanda/codemax/common/amqp/JobMessage.class
+com/reuzenpanda/codemax/tasks/pipeline/packs/PackInstaller.class
 com/reuzenpanda/codemax/projects/controllers/ProjectController$FileWriteRequest.class
 com/reuzenpanda/codemax/projects/controllers/ProjectController$QuestionsRequest.class
 com/reuzenpanda/codemax/common/exceptions/NotFoundException.class
@@ -56,6 +58,7 @@ com/reuzenpanda/codemax/tasks/services/TaskService.class
 com/reuzenpanda/codemax/tasks/pipeline/memory/ProjectMemoryService.class
 com/reuzenpanda/codemax/projects/controllers/ProjectController$PromptRequest.class
 com/reuzenpanda/codemax/projects/repositories/ProjectFileJpaRepository.class
+com/reuzenpanda/codemax/tasks/pipeline/packs/EntityDefinition.class
 com/reuzenpanda/codemax/common/amqp/QueuePublisher.class
 com/reuzenpanda/codemax/tasks/pipeline/generators/ModelGenerator.class
 com/reuzenpanda/codemax/auth/repositories/UserJpaRepository.class
@@ -66,6 +69,7 @@ com/reuzenpanda/codemax/tasks/repositories/TaskJpaRepository.class
 com/reuzenpanda/codemax/projects/repositories/ProjectRepository.class
 com/reuzenpanda/codemax/auth/mappers/UserMapper.class
 com/reuzenpanda/codemax/common/exceptions/ForbiddenException.class
+com/reuzenpanda/codemax/tasks/pipeline/packs/PackSelector.class
 com/reuzenpanda/codemax/auth/controllers/AuthController$LoginRequest.class
 com/reuzenpanda/codemax/common/docker/DockerService$2.class
 com/reuzenpanda/codemax/tasks/pipeline/generators/RouteGenerator.class
@@ -82,6 +86,9 @@ com/reuzenpanda/codemax/auth/controllers/AuthController.class
 com/reuzenpanda/codemax/tasks/pipeline/model/StepType.class
 com/reuzenpanda/codemax/projects/entities/ProjectStatus.class
 com/reuzenpanda/codemax/common/security/JwtService.class
+com/reuzenpanda/codemax/tasks/pipeline/packs/EntityExtractor.class
+com/reuzenpanda/codemax/tasks/pipeline/packs/PackSelector$Selection.class
+com/reuzenpanda/codemax/tasks/pipeline/packs/PackRegistry.class
 com/reuzenpanda/codemax/common/openai/OpenAiClient.class
 com/reuzenpanda/codemax/auth/entities/UserApiKey.class
 com/reuzenpanda/codemax/tasks/pipeline/model/ExecutionStep.class

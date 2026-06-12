@@ -1,0 +1,182 @@
+import { useState, useEffect } from 'react'
+import { Table } from '@/components/ui/Table'
+import type { Column } from '@/components/ui/Table'
+import { Modal } from '@/components/ui/Modal'
+import { Button } from '@/components/ui/Button'
+import { Input } from '@/components/ui/Input'
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog'
+import { EmptyState } from '@/components/ui/EmptyState'
+import { Spinner } from '@/components/ui/Spinner'
+import { useToast } from '@/components/ui/Toast'
+import { useAuth } from '@/hooks/useAuth'
+import { Inbox } from 'lucide-react'
+import { get{{Entities}}, create{{EntityName}}, update{{EntityName}}, delete{{EntityName}} } from '../services/{{entities}}'
+import type { I{{EntityName}}, Create{{EntityName}}Request } from '../types'
+
+export default function {{Entities}}Page() {
+  const { token } = useAuth()
+  const { toast } = useToast()
+  const [items, setItems] = useState<I{{EntityName}}[]>([])
+  const [loading, setLoading] = useState(true)
+
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editing, setEditing] = useState<I{{EntityName}} | null>(null)
+  const [form, setForm] = useState<Create{{EntityName}}Request>({ title: '', description: '' })
+  const [saving, setSaving] = useState(false)
+
+  const [deleteTarget, setDeleteTarget] = useState<I{{EntityName}} | null>(null)
+
+  useEffect(() => {
+    if (!token) return
+    setLoading(true)
+    get{{Entities}}(token)
+      .then(setItems)
+      .catch(() => toast.error('Failed to load {{entities}}'))
+      .finally(() => setLoading(false))
+  }, [token])
+
+  function openCreate() {
+    setEditing(null)
+    setForm({ title: '', description: '' })
+    setModalOpen(true)
+  }
+
+  function openEdit(item: I{{EntityName}}) {
+    setEditing(item)
+    setForm({ title: item.title, description: item.description })
+    setModalOpen(true)
+  }
+
+  async function handleSave() {
+    if (!form.title.trim() || !token) return
+    setSaving(true)
+    try {
+      if (editing) {
+        const updated = await update{{EntityName}}(editing._id, form, token)
+        setItems(prev => prev.map(i => i._id === updated._id ? updated : i))
+        toast.success('{{EntityName}} updated')
+      } else {
+        const created = await create{{EntityName}}(form, token)
+        setItems(prev => [created, ...prev])
+        toast.success('{{EntityName}} created')
+      }
+      setModalOpen(false)
+    } catch {
+      toast.error('Failed to save')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleDelete() {
+    if (!deleteTarget || !token) return
+    try {
+      await delete{{EntityName}}(deleteTarget._id, token)
+      setItems(prev => prev.filter(i => i._id !== deleteTarget._id))
+      toast.success('{{EntityName}} deleted')
+    } catch {
+      toast.error('Failed to delete')
+    } finally {
+      setDeleteTarget(null)
+    }
+  }
+
+  const columns: Column<I{{EntityName}}>[] = [
+    { key: 'title',       header: 'Title' },
+    { key: 'description', header: 'Description' },
+    {
+      key: 'createdAt',
+      header: 'Created',
+      render: v => new Date(v as string).toLocaleDateString(),
+    },
+    {
+      key: '_id',
+      header: '',
+      render: (_v, row) => (
+        <div className="flex items-center gap-2 justify-end">
+          <Button size="sm" variant="ghost" onClick={() => openEdit(row)}>Edit</Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="text-red-400 hover:text-red-300"
+            onClick={() => setDeleteTarget(row)}
+          >
+            Delete
+          </Button>
+        </div>
+      ),
+    },
+  ]
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <Spinner size="lg" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="p-6 max-w-screen-lg mx-auto">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">{{Entities}}</h1>
+          <p className="text-sm text-muted mt-0.5">{items.length} item{items.length !== 1 ? 's' : ''}</p>
+        </div>
+        <Button onClick={openCreate} size="sm">+ New {{EntityName}}</Button>
+      </div>
+
+      {items.length === 0 ? (
+        <EmptyState
+          icon={<Inbox className="h-8 w-8" />}
+          title="No {{entities}} yet"
+          description="Create your first {{entityName}} to get started."
+          action={{ label: '+ New {{EntityName}}', onClick: openCreate }}
+        />
+      ) : (
+        <Table columns={columns} data={items} />
+      )}
+
+      <Modal
+        isOpen={modalOpen}
+        onClose={() => setModalOpen(false)}
+        title={editing ? 'Edit {{EntityName}}' : 'New {{EntityName}}'}
+      >
+        <div className="space-y-4">
+          <Input
+            label="Title"
+            value={form.title}
+            onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
+            placeholder="Enter title..."
+          />
+          <Input
+            label="Description"
+            value={form.description ?? ''}
+            onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+            placeholder="Optional description..."
+          />
+        </div>
+        <div className="flex justify-end gap-2 mt-6">
+          <Button variant="ghost" onClick={() => setModalOpen(false)} disabled={saving}>
+            Cancel
+          </Button>
+          <Button onClick={handleSave} disabled={saving || !form.title.trim()}>
+            {saving ? 'Saving…' : editing ? 'Save changes' : 'Create'}
+          </Button>
+        </div>
+      </Modal>
+
+      {deleteTarget && (
+        <ConfirmDialog
+          isOpen
+          title="Delete {{EntityName}}"
+          description={`Delete "${deleteTarget.title}"? This cannot be undone.`}
+          confirmLabel="Delete"
+          variant="danger"
+          onConfirm={handleDelete}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
+    </div>
+  )
+}

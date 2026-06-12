@@ -1,0 +1,16 @@
+export interface I{{EntityName}} {
+  _id: string
+  title: string
+  description: string
+{{tsDefs}}
+  userId: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface Create{{EntityName}}Request {
+  title: string
+  description?: string
+}
+
+export type Update{{EntityName}}Request = Partial<Create{{EntityName}}Request>

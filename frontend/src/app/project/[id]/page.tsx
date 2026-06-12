@@ -1260,7 +1260,7 @@ export default function ProjectPage() {
           <div className="flex-1 overflow-hidden">
             {view === "preview" ? (
               <div className="h-full flex items-center justify-center bg-[#060606]">
-                {iframeSrc && isReady ? (
+                {iframeSrc ? (
                   <div className={`h-full bg-white overflow-hidden transition-all duration-300 ${deviceMode === "mobile" ? "w-[390px] rounded-[20px] my-4 shadow-2xl" : "w-full"}`}>
                     <iframe key={`${previewKey}-${currentRoute}`} src={iframeSrc} className="w-full h-full border-0" title="preview" />
                   </div>

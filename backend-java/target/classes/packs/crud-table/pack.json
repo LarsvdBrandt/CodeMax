@@ -1,0 +1,7 @@
+{
+  "name": "crud-table",
+  "description": "CRUD table for managing a list of items with create, edit, and delete. Best for inventory, expenses, contacts, orders, and any list-based management apps.",
+  "requiresAuth": true,
+  "requiresEntity": true,
+  "tags": ["crud", "table", "list", "manage", "inventory", "expenses", "contacts", "records", "data", "items"]
+}

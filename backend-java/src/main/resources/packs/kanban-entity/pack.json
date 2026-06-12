@@ -1,0 +1,7 @@
+{
+  "name": "kanban-entity",
+  "description": "Kanban board for managing items across status columns. Best for task management, project tracking, workflow, and productivity apps.",
+  "requiresAuth": true,
+  "requiresEntity": true,
+  "tags": ["kanban", "board", "tasks", "workflow", "pipeline", "status", "drag", "productivity", "todo", "project"]
+}

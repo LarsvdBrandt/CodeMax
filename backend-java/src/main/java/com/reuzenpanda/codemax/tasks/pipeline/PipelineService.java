@@ -19,6 +19,7 @@ import com.reuzenpanda.codemax.tasks.pipeline.engine.TemplateKnowledgeBuilder;
 import com.reuzenpanda.codemax.tasks.pipeline.generators.*;
 import com.reuzenpanda.codemax.tasks.pipeline.memory.ProjectMemoryService;
 import com.reuzenpanda.codemax.tasks.pipeline.model.*;
+import com.reuzenpanda.codemax.tasks.pipeline.packs.*;
 import com.reuzenpanda.codemax.tasks.pipeline.stages.ArchitectStage;
 import com.reuzenpanda.codemax.tasks.pipeline.stages.PlannerStage;
 import com.reuzenpanda.codemax.tasks.pipeline.stages.ReviewStage;
@@ -58,7 +59,13 @@ public class PipelineService {
     private final ObjectMapper objectMapper;
     private final ResourcePatternResolver resourceLoader;
 
-    // V3 pipeline components
+    // Pack-based pipeline components
+    private final PackRegistry packRegistry;
+    private final PackSelector packSelector;
+    private final EntityExtractor entityExtractor;
+    private final PackInstaller packInstaller;
+
+    // V3 pipeline components (fallback)
     private final TemplateKnowledgeBuilder knowledgeBuilder;
     private final ArchitectStage architect;
     private final PlannerStage planner;
@@ -98,65 +105,115 @@ public class PipelineService {
 
             applyViteProxy(projectDir);
 
-            // ── V3: Knowledge + Spec + Plan ───────────────────────────────────
+            // ── Knowledge (used by autofix and V3 fallback) ───────────────────
             pipeLog(task, "knowledge", "running", "Scanning template knowledge");
             TemplateKnowledge knowledge = knowledgeBuilder.build(projectDir);
             pipeLog(task, "knowledge", "done", knowledge.availableComponents().size() + " components found");
 
-            AppSpecification spec;
-            ExecutionPlan plan;
             boolean isUpdate = memory.hasMemory(projectDir);
-
-            if (isUpdate) {
-                pipeLog(task, "architect", "running", "Merging with existing project spec");
-                AppSpecification existing = memory.loadSpecification(projectDir);
-                spec = architect.architectUpdate(prompt, answers, knowledge, existing);
-                plan = planner.planUpdate(spec, existing);
-                pipeLog(task, "architect", "done", "Update spec: " + spec.appName() + " — " + spec.entities().size() + " entities");
-            } else {
-                pipeLog(task, "architect", "running", "Analyzing your request");
-                spec = architect.architect(prompt, answers, knowledge);
-                plan = planner.plan(spec);
-                pipeLog(task, "architect", "done", "App: " + spec.appName() + " — entity: " +
-                    spec.entities().stream().map(EntitySpec::name).collect(Collectors.joining(", ")));
-            }
-
-            // ── V3: Execute plan steps per entity ─────────────────────────────
             List<String> generatedFiles = new ArrayList<>();
 
-            for (EntitySpec entity : spec.entities()) {
-                pipeLog(task, "backend_model", "running", "Generating " + entity.name() + " model");
-                String modelCode = modelGen.generate(projectDir, spec, entity, knowledge);
-                generatedFiles.add("server/src/models/" + entity.name() + ".ts");
-                pipeLog(task, "backend_model", "done", "Model generated");
+            // ── Pack selector: try pack-based flow first ──────────────────────
+            pipeLog(task, "pack_select", "running", "Selecting component packs");
+            PackSelector.Selection selection = packSelector.select(prompt, packRegistry.all());
+            pipeLog(task, "pack_select", "done", "Packs: " + selection.packs());
 
-                pipeLog(task, "backend_routes", "running", "Generating " + entity.plural() + " routes");
-                routeGen.generate(projectDir, spec, entity, knowledge);
-                generatedFiles.add("server/src/routes/" + entity.plural() + ".ts");
-                pipeLog(task, "backend_routes", "done", "Routes generated");
+            AppSpecification spec;
+            ExecutionPlan plan;
 
-                pipeLog(task, "route_index", "running", "Wiring routes");
-                updateRouteIndex(projectDir, entity);
-                pipeLog(task, "route_index", "done", "Routes mounted");
+            if (!selection.packs().isEmpty()) {
+                // ── Pack flow ─────────────────────────────────────────────────
+                pipeLog(task, "entity_extract", "running", "Extracting entity definition");
+                EntityDefinition entity = entityExtractor.extract(prompt, selection.packs());
+                pipeLog(task, "entity_extract", "done", "Entity: " + entity.entityName());
 
-                pipeLog(task, "frontend_types", "running", "Generating TypeScript types");
-                typeGen.generate(projectDir, spec, entity, knowledge);
-                generatedFiles.add("src/types/index.ts");
-                pipeLog(task, "frontend_types", "done", "Types generated");
+                for (String packName : selection.packs()) {
+                    pipeLog(task, "pack_install", "running", "Installing " + packName + " pack");
+                    packInstaller.install(projectDir, packName, entity);
+                    generatedFiles.add("server/src/models/" + PackInstaller.capitalize(entity.entityName()) + ".ts");
+                    generatedFiles.add("server/src/routes/" + entity.entityNamePlural() + ".ts");
+                    generatedFiles.add("src/types/index.ts");
+                    generatedFiles.add("src/services/" + entity.entityNamePlural() + ".ts");
+                    generatedFiles.add("src/pages/" + PackInstaller.capitalize(entity.entityNamePlural()) + "Page.tsx");
+                    pipeLog(task, "pack_install", "done", packName + " installed");
+                }
 
-                pipeLog(task, "frontend_service", "running", "Generating " + entity.plural() + " service");
-                serviceGen.generate(projectDir, spec, entity, knowledge);
-                generatedFiles.add("src/services/" + entity.plural() + ".ts");
-                pipeLog(task, "frontend_service", "done", "Service generated");
+                // Build minimal spec for branding + memory
+                String appName = answers.getOrDefault("business_name", "My App");
+                String colorRgb = answers.getOrDefault("primary_color", "99 102 241");
+                String tagline  = answers.getOrDefault("tagline", "");
+                BrandingSpec branding = new BrandingSpec(colorRgb, tagline, appName, prompt, List.of());
+                EntitySpec primaryEntity = new EntitySpec(
+                    entity.entityName(), entity.entityNamePlural(),
+                    "/" + entity.entityNamePlural(), List.of()
+                );
+                spec = new AppSpecification(appName, prompt, branding,
+                    List.of(primaryEntity), List.of(), List.of(), isUpdate);
+                plan = new ExecutionPlan(List.of());
 
-                pipeLog(task, "frontend_page", "running", "Building " + entity.name() + " page");
-                pageGen.generate(projectDir, spec, entity, knowledge);
-                generatedFiles.add("src/pages/" + entity.name() + "sPage.tsx");
-                pipeLog(task, "frontend_page", "done", "Page generated");
+            } else {
+                // ── V3 fallback: full AI-generated code path ──────────────────
+                if (isUpdate) {
+                    pipeLog(task, "architect", "running", "Merging with existing project spec");
+                    AppSpecification existing = memory.loadSpecification(projectDir);
+                    spec = architect.architectUpdate(prompt, answers, knowledge, existing);
+                    plan = planner.planUpdate(spec, existing);
+                    pipeLog(task, "architect", "done", "Update spec: " + spec.appName());
+                } else {
+                    pipeLog(task, "architect", "running", "Analyzing your request");
+                    spec = architect.architect(prompt, answers, knowledge);
+                    plan = planner.plan(spec);
+                    pipeLog(task, "architect", "done", "App: " + spec.appName() + " — entities: " +
+                        spec.entities().stream().map(EntitySpec::name).collect(Collectors.joining(", ")));
+                }
 
-                pipeLog(task, "routing", "running", "Updating navigation");
-                navGen.generate(projectDir, spec, entity);
-                pipeLog(task, "routing", "done", "Navigation updated");
+                for (EntitySpec entity : spec.entities()) {
+                    pipeLog(task, "backend_model", "running", "Generating " + entity.name() + " model");
+                    modelGen.generate(projectDir, spec, entity, knowledge);
+                    generatedFiles.add("server/src/models/" + entity.name() + ".ts");
+                    pipeLog(task, "backend_model", "done", "Model generated");
+
+                    pipeLog(task, "backend_routes", "running", "Generating " + entity.plural() + " routes");
+                    routeGen.generate(projectDir, spec, entity, knowledge);
+                    generatedFiles.add("server/src/routes/" + entity.plural() + ".ts");
+                    pipeLog(task, "backend_routes", "done", "Routes generated");
+
+                    pipeLog(task, "route_index", "running", "Wiring routes");
+                    updateRouteIndex(projectDir, entity);
+                    pipeLog(task, "route_index", "done", "Routes mounted");
+
+                    pipeLog(task, "frontend_types", "running", "Generating TypeScript types");
+                    typeGen.generate(projectDir, spec, entity, knowledge);
+                    generatedFiles.add("src/types/index.ts");
+                    pipeLog(task, "frontend_types", "done", "Types generated");
+
+                    pipeLog(task, "frontend_service", "running", "Generating " + entity.plural() + " service");
+                    serviceGen.generate(projectDir, spec, entity, knowledge);
+                    generatedFiles.add("src/services/" + entity.plural() + ".ts");
+                    pipeLog(task, "frontend_service", "done", "Service generated");
+
+                    pipeLog(task, "frontend_page", "running", "Building " + entity.name() + " page");
+                    pageGen.generate(projectDir, spec, entity, knowledge);
+                    generatedFiles.add("src/pages/" + entity.name() + "sPage.tsx");
+                    pipeLog(task, "frontend_page", "done", "Page generated");
+
+                    pipeLog(task, "routing", "running", "Updating navigation");
+                    navGen.generate(projectDir, spec, entity);
+                    pipeLog(task, "routing", "done", "Navigation updated");
+                }
+
+                // Review gate (V3 only)
+                if (props.getReviewModel() != null && !props.getReviewModel().isBlank() && !spec.entities().isEmpty()) {
+                    pipeLog(task, "review", "running", "Reviewing generated code");
+                    EntitySpec primary = spec.entities().get(0);
+                    Map<String, String> reviewFiles = reviewer.collectReviewFiles(projectDir, primary.plural());
+                    List<Patch> fixes = reviewer.review(spec, reviewFiles);
+                    if (!fixes.isEmpty()) {
+                        pipeLog(task, "review", "running", "Applying " + fixes.size() + " review fix(es)");
+                        patchEngine.apply(projectDir, fixes);
+                    }
+                    pipeLog(task, "review", "done", "Review complete");
+                }
             }
 
             pipeLog(task, "branding", "running", "Applying branding");
@@ -164,20 +221,7 @@ public class PipelineService {
             generatedFiles.add("src/config/content.ts");
             pipeLog(task, "branding", "done", "Branding applied");
 
-            // ── V3: Review gate ───────────────────────────────────────────────
-            if (props.getReviewModel() != null && !props.getReviewModel().isBlank() && !spec.entities().isEmpty()) {
-                pipeLog(task, "review", "running", "Reviewing generated code");
-                EntitySpec primary = spec.entities().get(0);
-                Map<String, String> reviewFiles = reviewer.collectReviewFiles(projectDir, primary.plural());
-                List<Patch> fixes = reviewer.review(spec, reviewFiles);
-                if (!fixes.isEmpty()) {
-                    pipeLog(task, "review", "running", "Applying " + fixes.size() + " review fix(es)");
-                    patchEngine.apply(projectDir, fixes);
-                }
-                pipeLog(task, "review", "done", "Review complete");
-            }
-
-            // ── V3: Save memory ───────────────────────────────────────────────
+            // ── Save memory ───────────────────────────────────────────────────
             memory.save(projectDir, spec, plan, knowledge, generatedFiles, prompt);
 
             // ── Build Docker container ────────────────────────────────────────

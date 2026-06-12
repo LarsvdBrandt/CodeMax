@@ -1,5 +1,5 @@
 "use client";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { generatePlan, createProject, getProjectQuestions, type Question } from "@/lib/api";
 import ProjectsSidebar from "@/components/ProjectsSidebar";
@@ -20,23 +20,93 @@ function parseIntent(text: string): "yes" | "no" | "restart" | "unknown" {
   return "unknown";
 }
 
-function TypedText({ text, speed = 8 }: { text: string; speed?: number }) {
+// ── Markdown renderer ────────────────────────────────────────────────────────
+
+function renderInline(str: string): React.ReactNode {
+  const parts = str.split(/(\*\*[^*]*\*\*)/g);
+  return parts.map((p, i) =>
+    p.startsWith("**") && p.endsWith("**") && p.length > 4
+      ? <strong key={i} className="text-white font-semibold">{p.slice(2, -2)}</strong>
+      : p
+  );
+}
+
+function renderMarkdown(text: string): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  const lines = text.split("\n");
+  let listItems: React.ReactNode[] = [];
+
+  const flushList = (idx: number) => {
+    if (listItems.length > 0) {
+      nodes.push(
+        <ul key={`ul-${idx}`} className="space-y-1.5 my-2 pl-1">
+          {listItems}
+        </ul>
+      );
+      listItems = [];
+    }
+  };
+
+  lines.forEach((line, i) => {
+    if (line.startsWith("# ")) {
+      flushList(i);
+      nodes.push(<h1 key={i} className="text-base font-bold text-white mt-3 mb-1">{renderInline(line.slice(2))}</h1>);
+    } else if (line.startsWith("## ")) {
+      flushList(i);
+      nodes.push(<h2 key={i} className="text-sm font-bold text-[#ddd] mt-3 mb-1">{renderInline(line.slice(3))}</h2>);
+    } else if (line.startsWith("- ") || line.startsWith("* ")) {
+      listItems.push(
+        <li key={i} className="flex gap-2 text-[#bbb] text-sm leading-relaxed">
+          <span className="text-[#555] flex-shrink-0">•</span>
+          <span>{renderInline(line.slice(2))}</span>
+        </li>
+      );
+    } else if (line.trim() === "") {
+      flushList(i);
+      if (nodes.length > 0) nodes.push(<div key={i} className="h-1" />);
+    } else {
+      flushList(i);
+      nodes.push(<p key={i} className="text-[#bbb] text-sm leading-relaxed">{renderInline(line)}</p>);
+    }
+  });
+
+  flushList(lines.length);
+  return nodes;
+}
+
+function TypedMarkdown({
+  text,
+  speed = 6,
+  onTick,
+}: {
+  text: string;
+  speed?: number;
+  onTick?: () => void;
+}) {
   const [shown, setShown] = useState(0);
-  const chunkSize = text.length > 400 ? 3 : 1;
+  const chunkSize = text.length > 300 ? 5 : 1;
+
   useEffect(() => { setShown(0); }, [text]);
+
   useEffect(() => {
     if (shown >= text.length) return;
-    const t = setTimeout(() => setShown(s => Math.min(s + chunkSize, text.length)), speed);
+    const t = setTimeout(() => {
+      setShown(s => Math.min(s + chunkSize, text.length));
+      onTick?.();
+    }, speed);
     return () => clearTimeout(t);
-  }, [shown, text, chunkSize, speed]);
+  }, [shown, text, chunkSize, speed, onTick]);
+
+  const isTyping = shown < text.length;
+
   return (
-    <span className="whitespace-pre-wrap">
-      {text.slice(0, shown)}
-      {shown < text.length && (
-        <span className="inline-block w-[2px] h-[14px] bg-[#666] align-middle ml-0.5"
+    <div className="space-y-0.5">
+      {renderMarkdown(text.slice(0, shown))}
+      {isTyping && (
+        <span className="inline-block w-[2px] h-[13px] bg-[#666] align-middle ml-0.5"
           style={{ animation: "blink 0.7s step-end infinite" }} />
       )}
-    </span>
+    </div>
   );
 }
 
@@ -160,6 +230,10 @@ export default function WelcomePage() {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const hasMessages = messages.length > 0;
+
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "instant" });
+  }, []);
 
   useEffect(() => {
     if (!localStorage.getItem("token")) router.replace("/login");
@@ -339,8 +413,10 @@ export default function WelcomePage() {
                     : "text-[#bbb] rounded-tl-[4px]"
                 }`}>
                   {msg.role === "ai" && msg.typed
-                    ? <TypedText text={msg.content} />
-                    : <span className="whitespace-pre-wrap">{msg.content}</span>}
+                    ? <TypedMarkdown text={msg.content} onTick={scrollToBottom} />
+                    : msg.role === "ai"
+                      ? <div className="space-y-0.5">{renderMarkdown(msg.content)}</div>
+                      : <span className="whitespace-pre-wrap">{msg.content}</span>}
                 </div>
               </div>
             ))}

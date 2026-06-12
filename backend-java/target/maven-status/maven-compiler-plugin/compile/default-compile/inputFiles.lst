@@ -75,6 +75,12 @@
 /Users/larsvandenbrandt/Repos/CodeMaxing/codemax/backend-java/src/main/java/com/reuzenpanda/codemax/tasks/pipeline/model/ProjectMemory.java
 /Users/larsvandenbrandt/Repos/CodeMaxing/codemax/backend-java/src/main/java/com/reuzenpanda/codemax/tasks/pipeline/model/StepType.java
 /Users/larsvandenbrandt/Repos/CodeMaxing/codemax/backend-java/src/main/java/com/reuzenpanda/codemax/tasks/pipeline/model/TemplateKnowledge.java
+/Users/larsvandenbrandt/Repos/CodeMaxing/codemax/backend-java/src/main/java/com/reuzenpanda/codemax/tasks/pipeline/packs/EntityDefinition.java
+/Users/larsvandenbrandt/Repos/CodeMaxing/codemax/backend-java/src/main/java/com/reuzenpanda/codemax/tasks/pipeline/packs/EntityExtractor.java
+/Users/larsvandenbrandt/Repos/CodeMaxing/codemax/backend-java/src/main/java/com/reuzenpanda/codemax/tasks/pipeline/packs/PackInstaller.java
+/Users/larsvandenbrandt/Repos/CodeMaxing/codemax/backend-java/src/main/java/com/reuzenpanda/codemax/tasks/pipeline/packs/PackMetadata.java
+/Users/larsvandenbrandt/Repos/CodeMaxing/codemax/backend-java/src/main/java/com/reuzenpanda/codemax/tasks/pipeline/packs/PackRegistry.java
+/Users/larsvandenbrandt/Repos/CodeMaxing/codemax/backend-java/src/main/java/com/reuzenpanda/codemax/tasks/pipeline/packs/PackSelector.java
 /Users/larsvandenbrandt/Repos/CodeMaxing/codemax/backend-java/src/main/java/com/reuzenpanda/codemax/tasks/pipeline/stages/ArchitectStage.java
 /Users/larsvandenbrandt/Repos/CodeMaxing/codemax/backend-java/src/main/java/com/reuzenpanda/codemax/tasks/pipeline/stages/PlannerStage.java
 /Users/larsvandenbrandt/Repos/CodeMaxing/codemax/backend-java/src/main/java/com/reuzenpanda/codemax/tasks/pipeline/stages/ReviewStage.java
