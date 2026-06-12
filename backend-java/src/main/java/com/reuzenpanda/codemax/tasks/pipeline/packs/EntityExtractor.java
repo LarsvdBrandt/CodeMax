@@ -19,7 +19,13 @@ public class EntityExtractor {
     private final CodeMaxProperties props;
     private final ObjectMapper objectMapper;
 
+    /** Extract entity definition for a new build. */
     public EntityDefinition extract(String prompt, List<String> packNames) {
+        return extract(prompt, packNames, "");
+    }
+
+    /** Extract entity definition, optionally providing existing schema context for update builds. */
+    public EntityDefinition extract(String prompt, List<String> packNames, String existingSchema) {
         String sys = """
             You are an entity extractor for an app builder.
             Extract the main data entity name and its EXTRA fields from the user's app description.
@@ -52,8 +58,12 @@ public class EntityExtractor {
             - Must match the fields listed in mongoose_fields
             """;
 
+        String userMsg = (existingSchema != null && !existingSchema.isBlank()
+            ? existingSchema + "\n\n"
+            : "") + "App: " + prompt;
+
         try {
-            String raw = aiRouter.chatJson(props.getPlannerModel(), sys, "App: " + prompt);
+            String raw = aiRouter.chatJson(props.getPlannerModel(), sys, userMsg);
             JsonNode node = objectMapper.readTree(raw);
 
             String entityName = node.path("entity_name").asText("item").trim().toLowerCase();

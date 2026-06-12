@@ -71,7 +71,6 @@ com/reuzenpanda/codemax/auth/mappers/UserMapper.class
 com/reuzenpanda/codemax/common/exceptions/ForbiddenException.class
 com/reuzenpanda/codemax/tasks/pipeline/packs/PackSelector.class
 com/reuzenpanda/codemax/auth/controllers/AuthController$LoginRequest.class
-com/reuzenpanda/codemax/common/docker/DockerService$2.class
 com/reuzenpanda/codemax/tasks/pipeline/generators/RouteGenerator.class
 com/reuzenpanda/codemax/projects/repositories/ProjectJpaRepository.class
 com/reuzenpanda/codemax/auth/controllers/AuthController$RegisterRequest.class
@@ -93,6 +92,7 @@ com/reuzenpanda/codemax/common/openai/OpenAiClient.class
 com/reuzenpanda/codemax/auth/entities/UserApiKey.class
 com/reuzenpanda/codemax/tasks/pipeline/model/ExecutionStep.class
 com/reuzenpanda/codemax/projects/controllers/ProjectController$CreateProjectRequest.class
+com/reuzenpanda/codemax/tasks/pipeline/packs/DatabaseSchemaService$EntityEntry.class
 com/reuzenpanda/codemax/projects/services/IProjectService.class
 com/reuzenpanda/codemax/tasks/entities/AgentLogEntry.class
 com/reuzenpanda/codemax/tasks/services/ITaskService.class
@@ -104,6 +104,7 @@ com/reuzenpanda/codemax/tasks/listeners/TaskListenerService.class
 com/reuzenpanda/codemax/auth/repositories/UserApiKeyJpaRepository.class
 com/reuzenpanda/codemax/auth/dtos/UserApiKeyDto.class
 com/reuzenpanda/codemax/projects/controllers/ProjectController$PlanningRequest.class
+com/reuzenpanda/codemax/tasks/pipeline/packs/DatabaseSchemaService.class
 com/reuzenpanda/codemax/tasks/pipeline/model/FieldSpec.class
 com/reuzenpanda/codemax/tasks/pipeline/generators/TypeGenerator.class
 com/reuzenpanda/codemax/projects/controllers/ProjectController$UpdateProjectRequest.class

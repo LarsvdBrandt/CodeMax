@@ -24,6 +24,7 @@ public class PackInstaller {
 
     private final ResourcePatternResolver resourceLoader;
     private final NavigationGenerator navGen;
+    private final DatabaseSchemaService schemaService;
 
     /**
      * Installs a named pack into the project directory.
@@ -65,10 +66,10 @@ public class PackInstaller {
             log.info("PackInstaller: wrote {}", outputRelative);
         }
 
-        // Patch routes/index.ts to mount the new entity router
-        updateRouteIndex(projectDir, tokens.get("entities"), tokens.get("EntityName"));
+        // Write a clean routes/index.ts referencing only auth + this entity (no todos/users/contact)
+        writeCleanRouteIndex(projectDir, tokens.get("entities"));
 
-        // Patch App.tsx + Navbar via NavigationGenerator (deterministic)
+        // Update App.tsx + Navbar via NavigationGenerator (deterministic)
         EntitySpec entitySpec = new EntitySpec(
             tokens.get("EntityName"),
             tokens.get("entities"),
@@ -77,11 +78,8 @@ public class PackInstaller {
         );
         navGen.generate(projectDir, null, entitySpec);
 
-        // Delete todo/dashboard reference files now that replacements exist
-        deleteIfExists(projectDir, "server/src/models/Todo.ts");
-        deleteIfExists(projectDir, "server/src/routes/todos.ts");
-        deleteIfExists(projectDir, "src/services/todos.ts");
-        deleteIfExists(projectDir, "src/pages/Dashboard.tsx");
+        // Persist schema so follow-up builds know what's already deployed
+        schemaService.writeSchema(projectDir, packName, entity);
 
         log.info("PackInstaller: '{}' pack installed successfully", packName);
     }
@@ -121,44 +119,30 @@ public class PackInstaller {
         return m;
     }
 
-    // ── Route index patching ──────────────────────────────────────────────────
+    // ── Route index ───────────────────────────────────────────────────────────
+    // Write a clean routes/index.ts that only wires auth + the generated entity.
+    // This replaces the fragile regex-patching approach.
 
-    private void updateRouteIndex(Path projectDir, String plural, String EntityName) throws IOException {
+    private void writeCleanRouteIndex(Path projectDir, String plural) throws IOException {
+        String content = String.format("""
+            import { Router } from 'express'
+            import authRouter from './auth'
+            import %1$sRouter from './%1$s'
+
+            const router = Router()
+
+            router.use('/auth',  authRouter)
+            router.use('/%1$s', %1$sRouter)
+
+            router.get('/health', (_req, res) => res.json({ status: 'ok' }))
+
+            export default router
+            """, plural);
+
         Path indexPath = projectDir.resolve("server/src/routes/index.ts");
-        if (!Files.exists(indexPath)) {
-            log.warn("PackInstaller: routes/index.ts not found, skipping route mount");
-            return;
-        }
-        String content = Files.readString(indexPath);
-
-        // Remove todos references (handle any amount of whitespace)
-        String updated = content
-            .replaceAll("import\\s+todosRouter\\s+from\\s+'\\./todos'[^\\n]*\\n?", "")
-            .replaceAll("router\\.use\\('/todos',\\s*todosRouter\\)[^\\n]*\\n?", "");
-
-        String importLine = "import " + plural + "Router from './" + plural + "'";
-        String useLine    = "router.use('/" + plural + "', " + plural + "Router)";
-
-        if (!updated.contains(importLine)) {
-            int lastImport = updated.lastIndexOf("import ");
-            if (lastImport >= 0) {
-                int eol = updated.indexOf('\n', lastImport);
-                updated = updated.substring(0, eol + 1) + importLine + "\n" + updated.substring(eol + 1);
-            } else {
-                updated = importLine + "\n" + updated;
-            }
-        }
-
-        if (!updated.contains(useLine)) {
-            int exportIdx = updated.lastIndexOf("export default");
-            if (exportIdx >= 0) {
-                updated = updated.substring(0, exportIdx) + useLine + "\n\n" + updated.substring(exportIdx);
-            } else {
-                updated += "\n" + useLine + "\n";
-            }
-        }
-
-        Files.writeString(indexPath, updated);
+        Files.createDirectories(indexPath.getParent());
+        Files.writeString(indexPath, content);
+        log.info("PackInstaller: wrote clean routes/index.ts for entity '{}'", plural);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -182,18 +166,6 @@ public class PackInstaller {
             result = result.replace("{{" + e.getKey() + "}}", e.getValue() != null ? e.getValue() : "");
         }
         return result;
-    }
-
-    private void deleteIfExists(Path projectDir, String relativePath) {
-        try {
-            Path p = projectDir.resolve(relativePath);
-            if (Files.exists(p)) {
-                Files.delete(p);
-                log.debug("PackInstaller: deleted reference file {}", relativePath);
-            }
-        } catch (IOException e) {
-            log.warn("PackInstaller: could not delete {}: {}", relativePath, e.getMessage());
-        }
     }
 
     public static String capitalize(String s) {

@@ -12,7 +12,7 @@
 export const api = {
   // Base URL is read from the environment so it can differ per environment
   // (local dev vs staging vs production) without code changes.
-  baseUrl: import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:3000',
+  baseUrl: import.meta.env.VITE_API_BASE_URL ?? '',
 
   // Default headers sent with every request.
   // The Authorization header is injected dynamically by the fetch wrapper

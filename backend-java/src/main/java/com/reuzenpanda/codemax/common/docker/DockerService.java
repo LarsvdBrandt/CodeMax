@@ -1,38 +1,34 @@
 package com.reuzenpanda.codemax.common.docker;
 
 import com.github.dockerjava.api.DockerClient;
-import com.github.dockerjava.api.command.CreateContainerResponse;
-import com.github.dockerjava.api.model.*;
 import com.github.dockerjava.core.DefaultDockerClientConfig;
 import com.github.dockerjava.core.DockerClientImpl;
 import com.github.dockerjava.httpclient5.ApacheDockerHttpClient;
+import com.reuzenpanda.codemax.common.config.CodeMaxProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
-import java.net.URI;
+import java.io.*;
+import java.net.*;
+import java.net.http.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.time.Duration;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
 public class DockerService {
 
-    private static final String IMAGE = "node:20-alpine";
-    private static final String NETWORK = "codemax_network";
-    private static final String VOLUME_NAME = "codemax_projects";
-    public static final int VITE_INTERNAL_PORT = 5173;
-
     public record PreviewResult(String containerId, int port) {}
 
     private final DockerClient docker;
+    private final CodeMaxProperties props;
 
-    public DockerService() {
+    public DockerService(CodeMaxProperties props) {
+        this.props = props;
         var config = DefaultDockerClientConfig.createDefaultConfigBuilder().build();
         var httpClient = new ApacheDockerHttpClient.Builder()
             .dockerHost(URI.create("unix:///var/run/docker.sock"))
@@ -40,76 +36,95 @@ public class DockerService {
         this.docker = DockerClientImpl.getInstance(config, httpClient);
     }
 
+    // ── Container/resource naming ──────────────────────────────────────────────
+
+    /** Returns the compose project name for a given project. Stored as containerId in DB. */
     public String containerName(UUID projectId) {
-        return "codemax_preview_" + projectId;
+        return "codemax-" + projectId;
     }
+
+    // ── Provision ─────────────────────────────────────────────────────────────
 
     /**
-     * Create (or recreate) and start the preview container for a full-stack project.
-     * Runs both Express (port 3000 internal) and Vite dev server (port 5173 internal).
-     * Docker auto-assigns a free host port — no race condition with manual port selection.
-     * Returns PreviewResult with the container ID and the actual assigned host port.
+     * Runs `docker compose up --build` for the project. Creates a 4-container stack:
+     * nginx (host port) → frontend:5173 + backend:3000 → mongo:27017
+     * Containers appear grouped in Docker Desktop under the compose project name.
      */
     public PreviewResult provisionPreview(UUID projectId, String existingContainerId,
-                                           Map<String, String> envVars) {
-        if (existingContainerId != null && !existingContainerId.isBlank()) {
-            try {
-                docker.stopContainerCmd(existingContainerId).exec();
-                docker.removeContainerCmd(existingContainerId).exec();
-            } catch (Exception ignored) {}
-        }
+                                          String jwtSecret, String appName, String dbName) {
+        Path projectDir = Path.of(props.getProjectsDir(), projectId.toString());
+        String projectName = containerName(projectId);
+        int nginxPort = findFreePort();
 
-        String name = containerName(projectId);
-        try { docker.removeContainerCmd(name).withForce(true).exec(); } catch (Exception ignored) {}
+        // Tear down any previous stack for this project
+        runComposeSilent(projectDir, projectName, "down", "--volumes", "--remove-orphans");
 
-        String base = "/projects/" + projectId;
-        String cmd = "cd " + base + "/server && npm install --silent && npm run dev & " +
-                     "cd " + base + " && npm install --silent && " +
-                     "VITE_PORT=" + VITE_INTERNAL_PORT + " npm run dev -- --host 0.0.0.0";
+        // Write .env — docker compose reads this automatically from the project dir
+        writeComposeEnv(projectDir, nginxPort, jwtSecret, appName, dbName, projectName);
 
-        List<String> env = new ArrayList<>();
-        env.add("NODE_ENV=development");
-        env.add("CHOKIDAR_USEPOLLING=true");
-        env.add("VITE_PORT=" + VITE_INTERNAL_PORT);
-        envVars.forEach((k, v) -> env.add(k + "=" + v));
+        // Build all images and start all 4 containers
+        runCompose(projectDir, projectName, "up", "-d", "--build");
 
-        // Bind to port 0 — Docker will assign the next available host port automatically
-        CreateContainerResponse container = docker.createContainerCmd(IMAGE)
-            .withName(name)
-            .withCmd("/bin/sh", "-c", cmd)
-            .withEnv(env.toArray(String[]::new))
-            .withHostConfig(HostConfig.newHostConfig()
-                .withBinds(new Bind(VOLUME_NAME, new Volume("/projects"), AccessMode.rw, SELContext.none, true))
-                .withPortBindings(PortBinding.parse("0:" + VITE_INTERNAL_PORT))
-                .withNetworkMode(NETWORK)
-                .withRestartPolicy(RestartPolicy.noRestart()))
-            .withExposedPorts(ExposedPort.tcp(VITE_INTERNAL_PORT))
-            .exec();
-
-        docker.startContainerCmd(container.getId()).exec();
-
-        // Inspect to find the actual host port Docker assigned
-        int hostPort = resolveHostPort(container.getId());
-        return new PreviewResult(container.getId(), hostPort);
+        log.info("DockerService: project {} running on nginx port {}", projectId, nginxPort);
+        return new PreviewResult(projectName, nginxPort);
     }
 
-    private int resolveHostPort(String containerId) {
+    // ── Container lifecycle ────────────────────────────────────────────────────
+
+    public void stopContainer(String name) {
+        runComposeSilent(resolveDir(name), name, "stop");
+    }
+
+    public void startContainer(String name) {
+        runComposeSilent(resolveDir(name), name, "start");
+    }
+
+    public void removeContainer(String name) {
+        runComposeSilent(resolveDir(name), name, "down", "--volumes");
+    }
+
+    public boolean isContainerRunning(String name) {
+        // name is the compose project name; nginx container is named {name}_nginx
+        String nginxContainer = name + "_nginx";
         try {
-            var info = docker.inspectContainerCmd(containerId).exec();
-            var bindings = info.getNetworkSettings().getPorts().getBindings();
-            var portBindings = bindings.get(ExposedPort.tcp(VITE_INTERNAL_PORT));
-            if (portBindings != null && portBindings.length > 0) {
-                return Integer.parseInt(portBindings[0].getHostPortSpec());
-            }
+            var info = docker.inspectContainerCmd(nginxContainer).exec();
+            return Boolean.TRUE.equals(info.getState().getRunning());
         } catch (Exception e) {
-            log.warn("Could not resolve host port for container {}: {}", containerId, e.getMessage());
+            return false;
         }
-        throw new IllegalStateException("Docker did not assign a host port for container " + containerId);
     }
 
-    /** Parse a .env file into a key→value map. Lines starting with # are ignored. */
+    // ── Logs ───────────────────────────────────────────────────────────────────
+
+    /** Returns logs from the backend service — where TypeScript/API errors appear. */
+    public List<String> getLogs(String containerIdentifier, int lines) {
+        Path dir = resolveDir(containerIdentifier);
+        if (dir == null) return List.of();
+        return runComposeCapture(dir, containerIdentifier,
+            "logs", "--tail=" + lines, "--no-color", "backend");
+    }
+
+    // ── Health check ───────────────────────────────────────────────────────────
+
+    /** Checks /api/health via nginx on the given host port. Uses host.docker.internal
+     *  because the Java container cannot reach host ports via localhost. */
+    public boolean isHealthy(int nginxPort) {
+        try {
+            HttpClient client = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(3)).build();
+            HttpRequest req = HttpRequest.newBuilder(
+                URI.create("http://host.docker.internal:" + nginxPort + "/api/health"))
+                .GET().timeout(Duration.ofSeconds(5)).build();
+            return client.send(req, HttpResponse.BodyHandlers.discarding()).statusCode() < 500;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    // ── Env file reader ────────────────────────────────────────────────────────
+
     public Map<String, String> readEnvFile(Path envFile) {
-        Map<String, String> result = new java.util.LinkedHashMap<>();
+        Map<String, String> result = new LinkedHashMap<>();
         if (!Files.exists(envFile)) return result;
         try {
             Files.readAllLines(envFile).forEach(line -> {
@@ -127,90 +142,115 @@ public class DockerService {
         return result;
     }
 
-    /** Get the last N lines of container logs. */
-    public List<String> getLogs(String containerId, int lines) {
-        List<String> result = new ArrayList<>();
-        try {
-            docker.logContainerCmd(containerId)
-                .withStdOut(true)
-                .withStdErr(true)
-                .withTail(lines)
-                .exec(new com.github.dockerjava.api.async.ResultCallback.Adapter<Frame>() {
-                    @Override public void onNext(Frame frame) {
-                        result.add(new String(frame.getPayload(), StandardCharsets.UTF_8).stripTrailing());
-                    }
-                }).awaitCompletion();
-        } catch (Exception e) {
-            log.warn("Failed to get container logs for {}: {}", containerId, e.getMessage());
-        }
-        return result;
-    }
+    // ── Exec (used by auto-fix loop) ───────────────────────────────────────────
 
-    /** Exec a command in the container and return stdout. */
     public String exec(String containerId, String... cmd) {
         try {
             var execCreate = docker.execCreateCmd(containerId)
-                .withCmd(cmd)
-                .withAttachStdout(true)
-                .withAttachStderr(true)
-                .exec();
+                .withCmd(cmd).withAttachStdout(true).withAttachStderr(true).exec();
             var output = new StringBuilder();
             docker.execStartCmd(execCreate.getId())
-                .exec(new com.github.dockerjava.api.async.ResultCallback.Adapter<Frame>() {
-                    @Override public void onNext(Frame frame) {
+                .exec(new com.github.dockerjava.api.async.ResultCallback.Adapter<
+                          com.github.dockerjava.api.model.Frame>() {
+                    @Override public void onNext(com.github.dockerjava.api.model.Frame frame) {
                         output.append(new String(frame.getPayload(), StandardCharsets.UTF_8));
                     }
                 }).awaitCompletion();
             return output.toString();
         } catch (Exception e) {
-            log.warn("Exec failed in container {}: {}", containerId, e.getMessage());
+            log.warn("Exec failed in {}: {}", containerId, e.getMessage());
             return "";
         }
     }
 
-    public void stopContainer(String containerId) {
-        try { docker.stopContainerCmd(containerId).exec(); } catch (Exception ignored) {}
-    }
+    // ── No-op stub (previously wrote per-project nginx config) ─────────────────
 
-    public void startContainer(String containerId) {
-        try { docker.startContainerCmd(containerId).exec(); } catch (Exception ignored) {}
-    }
-
-    public void removeContainer(String containerId) {
-        try { docker.removeContainerCmd(containerId).withForce(true).exec(); } catch (Exception ignored) {}
-    }
-
-    public boolean isContainerRunning(String containerId) {
-        try {
-            var info = docker.inspectContainerCmd(containerId).exec();
-            return Boolean.TRUE.equals(info.getState().getRunning());
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    /** Write nginx location block for the project. */
     public void writeNginxConfig(UUID projectId, String nginxConfDir) {
-        String confPath = nginxConfDir + "/previews.conf";
-        String locationBlock = "\nlocation /preview/" + projectId + "/ {\n" +
-            "    set $upstream codemax_preview_" + projectId + ";\n" +
-            "    proxy_pass http://$upstream:3000/;\n" +
-            "    proxy_set_header Host $host;\n" +
-            "    proxy_set_header X-Real-IP $remote_addr;\n" +
-            "}\n";
+        // Each project now has its own nginx container; no shared config needed.
+    }
+
+    // ── Private helpers ────────────────────────────────────────────────────────
+
+    private void writeComposeEnv(Path dir, int nginxPort, String jwtSecret,
+                                 String appName, String dbName, String projectName) {
+        String content = "NGINX_PORT=" + nginxPort + "\n"
+            + "MONGO_DB_NAME=" + dbName + "\n"
+            + "JWT_SECRET=" + jwtSecret + "\n"
+            + "APP_NAME=" + appName + "\n"
+            + "COMPOSE_PROJECT_NAME=" + projectName + "\n"
+            + "NODE_ENV=development\n";
         try {
-            java.nio.file.Path path = java.nio.file.Path.of(confPath);
-            String existing = java.nio.file.Files.exists(path)
-                ? java.nio.file.Files.readString(path)
-                : "";
-            String entry = "location /preview/" + projectId;
-            if (!existing.contains(entry)) {
-                java.nio.file.Files.writeString(path, existing + locationBlock);
-            }
-            // Signal nginx to reload
-            exec("nginx", "nginx", "-s", "reload");
-        } catch (Exception e) {
-            log.warn("Failed to update nginx config: {}", e.getMessage());
+            Files.writeString(dir.resolve(".env"), content);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to write compose .env: " + e.getMessage(), e);
         }
+    }
+
+    private void runCompose(Path dir, String projectName, String... args) {
+        if (dir == null) return;
+        List<String> cmd = new ArrayList<>(List.of("docker", "compose", "-p", projectName));
+        cmd.addAll(Arrays.asList(args));
+        log.info("DockerService: {}", String.join(" ", cmd));
+        try {
+            ProcessBuilder pb = new ProcessBuilder(cmd)
+                .directory(dir.toFile())
+                .redirectErrorStream(true);
+            Process p = pb.start();
+            try (var reader = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+                reader.lines().forEach(line -> log.info("[{}] {}", projectName, line));
+            }
+            int exit = p.waitFor();
+            if (exit != 0) {
+                throw new RuntimeException(
+                    "docker compose " + String.join(" ", args) + " exited " + exit);
+            }
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException("docker compose failed: " + e.getMessage(), e);
+        }
+    }
+
+    private void runComposeSilent(Path dir, String projectName, String... args) {
+        if (dir == null) return;
+        try { runCompose(dir, projectName, args); }
+        catch (Exception e) { log.debug("compose silent {}: {}", projectName, e.getMessage()); }
+    }
+
+    private List<String> runComposeCapture(Path dir, String projectName, String... args) {
+        if (dir == null) return List.of();
+        List<String> cmd = new ArrayList<>(List.of("docker", "compose", "-p", projectName));
+        cmd.addAll(Arrays.asList(args));
+        try {
+            ProcessBuilder pb = new ProcessBuilder(cmd)
+                .directory(dir.toFile())
+                .redirectErrorStream(true);
+            Process p = pb.start();
+            List<String> lines;
+            try (var reader = new BufferedReader(new InputStreamReader(p.getInputStream()))) {
+                lines = reader.lines().collect(Collectors.toList());
+            }
+            p.waitFor();
+            return lines;
+        } catch (Exception e) {
+            log.warn("compose capture failed for {}: {}", projectName, e.getMessage());
+            return List.of();
+        }
+    }
+
+    private Path resolveDir(String projectName) {
+        UUID id = extractProjectId(projectName);
+        return id == null ? null : Path.of(props.getProjectsDir(), id.toString());
+    }
+
+    private UUID extractProjectId(String name) {
+        if (name == null || !name.startsWith("codemax-")) return null;
+        try { return UUID.fromString(name.substring("codemax-".length())); }
+        catch (Exception ignored) { return null; }
+    }
+
+    private int findFreePort() {
+        try (ServerSocket s = new ServerSocket(0)) { return s.getLocalPort(); }
+        catch (IOException e) { throw new RuntimeException("No free port available", e); }
     }
 }

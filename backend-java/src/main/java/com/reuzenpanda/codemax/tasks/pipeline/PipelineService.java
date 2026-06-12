@@ -64,6 +64,7 @@ public class PipelineService {
     private final PackSelector packSelector;
     private final EntityExtractor entityExtractor;
     private final PackInstaller packInstaller;
+    private final DatabaseSchemaService schemaService;
 
     // V3 pipeline components (fallback)
     private final TemplateKnowledgeBuilder knowledgeBuilder;
@@ -100,10 +101,8 @@ public class PipelineService {
             pipeLog(task, "seed_template", "done", "Template copied");
 
             pipeLog(task, "env_vars", "running", "Configuring environment");
-            injectEnvVars(projectDir, projectId, answers);
+            String jwtSecret = injectEnvVars(projectDir, projectId, answers);
             pipeLog(task, "env_vars", "done", "Environment configured");
-
-            applyViteProxy(projectDir);
 
             // ── Knowledge (used by autofix and V3 fallback) ───────────────────
             pipeLog(task, "knowledge", "running", "Scanning template knowledge");
@@ -124,7 +123,8 @@ public class PipelineService {
             if (!selection.packs().isEmpty()) {
                 // ── Pack flow ─────────────────────────────────────────────────
                 pipeLog(task, "entity_extract", "running", "Extracting entity definition");
-                EntityDefinition entity = entityExtractor.extract(prompt, selection.packs());
+                String existingSchema = isUpdate ? schemaService.schemaContext(projectDir) : "";
+                EntityDefinition entity = entityExtractor.extract(prompt, selection.packs(), existingSchema);
                 pipeLog(task, "entity_extract", "done", "Entity: " + entity.entityName());
 
                 for (String packName : selection.packs()) {
@@ -226,8 +226,10 @@ public class PipelineService {
 
             // ── Build Docker container ────────────────────────────────────────
             pipeLog(task, "build", "running", "Starting preview container");
-            Map<String, String> envVars = buildContainerEnv(projectDir);
-            DockerService.PreviewResult preview = docker.provisionPreview(projectId, project.getContainerId(), envVars);
+            String appName = answers.getOrDefault("business_name", "My App");
+            String dbName  = "proj_" + projectId.toString().replace("-", "_");
+            DockerService.PreviewResult preview = docker.provisionPreview(
+                projectId, project.getContainerId(), jwtSecret, appName, dbName);
             project.setContainerId(preview.containerId());
             project.setPreviewPort(preview.port());
             projectRepo.save(project);
@@ -240,7 +242,7 @@ public class PipelineService {
                 List<String> logLines = docker.getLogs(containerId, 100);
                 String errorLog = String.join("\n", logLines);
 
-                if (isHealthy(docker.containerName(projectId))) {
+                if (docker.isHealthy(preview.port())) {
                     ready = true;
                     break;
                 }
@@ -255,8 +257,6 @@ public class PipelineService {
             task.setStatus(TaskStatus.done);
             taskRepo.save(task);
             pipeLog(task, "done", "done", "Build complete — preview on port " + preview.port());
-
-            docker.writeNginxConfig(projectId, "/etc/nginx/conf.d");
 
         } catch (Exception e) {
             log.error("Pipeline failed for task {}: {}", taskId, e.getMessage(), e);
@@ -341,70 +341,31 @@ public class PipelineService {
     }
 
     // ── Step 2: Inject env vars ───────────────────────────────────────────────
+    // Returns the generated JWT secret so it can be passed directly to DockerService.
 
-    private void injectEnvVars(Path projectDir, UUID projectId,
-                                Map<String, String> answers) throws IOException {
-        String dbName = "proj_" + projectId.toString().replace("-", "_");
-        String mongoUri = props.getMongoRootUrl() + "/" + dbName + "?authSource=admin";
+    private String injectEnvVars(Path projectDir, UUID projectId,
+                                  Map<String, String> answers) throws IOException {
+        String dbName    = "proj_" + projectId.toString().replace("-", "_");
         String jwtSecret = generateSecret();
-        String appUrl = "http://localhost:3000";
-        String appName = answers.getOrDefault("business_name", "My App");
+        String appName   = answers.getOrDefault("business_name", "My App");
 
+        // Write .env files for developer reference (not used by Docker containers directly —
+        // DockerService injects env vars when creating each container).
         Map<String, String> frontendEnv = new LinkedHashMap<>();
         frontendEnv.put("VITE_API_BASE_URL", "");
         frontendEnv.put("VITE_APP_NAME", appName);
-        frontendEnv.put("VITE_GOOGLE_CLIENT_ID", "");
-        frontendEnv.put("APP_URL", appUrl);
         frontendEnv.put("NODE_ENV", "development");
         writeEnvFile(projectDir.resolve(".env"), frontendEnv);
 
         Map<String, String> serverEnv = new LinkedHashMap<>();
         serverEnv.put("PORT", "3000");
-        serverEnv.put("MONGODB_URI", mongoUri);
+        serverEnv.put("MONGODB_URI", "mongodb://localhost:27017/" + dbName);
         serverEnv.put("JWT_SECRET", jwtSecret);
         serverEnv.put("JWT_EXPIRES_IN", "7d");
-        serverEnv.put("APP_URL", appUrl);
-        serverEnv.put("EMAIL_PROVIDER", "resend");
-        serverEnv.put("FROM_EMAIL", "noreply@example.com");
-        serverEnv.put("GOOGLE_CLIENT_ID", "");
-        serverEnv.put("GOOGLE_CLIENT_SECRET", "");
-        serverEnv.put("GITHUB_CLIENT_ID", "");
-        serverEnv.put("GITHUB_CLIENT_SECRET", "");
-        serverEnv.put("RESEND_API_KEY", "");
+        serverEnv.put("NODE_ENV", "development");
         writeEnvFile(projectDir.resolve("server/.env"), serverEnv);
-    }
 
-    // ── Step 3: Vite proxy ────────────────────────────────────────────────────
-
-    private void applyViteProxy(Path projectDir) throws IOException {
-        String content = """
-            import { defineConfig } from 'vite'
-            import react from '@vitejs/plugin-react'
-            import path from 'path'
-
-            const port = Number(process.env.VITE_PORT ?? 5173)
-
-            export default defineConfig({
-              plugins: [react()],
-              server: {
-                port,
-                host: true,
-                strictPort: true,
-                proxy: {
-                  '/api': {
-                    target: 'http://localhost:3000',
-                    changeOrigin: true,
-                  },
-                },
-              },
-              resolve: {
-                alias: {
-                  '@': path.resolve(__dirname, './src'),
-                },
-              },
-            })
-            """;
-        Files.writeString(projectDir.resolve("vite.config.ts"), content);
+        return jwtSecret;
     }
 
     // ── Route index: deterministic string patch ───────────────────────────────
@@ -529,13 +490,6 @@ public class PipelineService {
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private Map<String, String> buildContainerEnv(Path projectDir) {
-        Map<String, String> merged = new LinkedHashMap<>();
-        merged.putAll(docker.readEnvFile(projectDir.resolve("server/.env")));
-        merged.putAll(docker.readEnvFile(projectDir.resolve(".env")));
-        return merged;
-    }
-
     private void writeEnvFile(Path envFile, Map<String, String> values) throws IOException {
         Files.createDirectories(envFile.getParent());
         StringBuilder sb = new StringBuilder();
@@ -596,17 +550,6 @@ public class PipelineService {
         task.getAgentLog().add(entry);
         taskRepo.save(task);
         log.info("[pipeline] {} — {}: {}", step, status, detail);
-    }
-
-    private boolean isHealthy(String containerName) {
-        try {
-            HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
-            URI uri = URI.create("http://" + containerName + ":" + DockerService.VITE_INTERNAL_PORT);
-            HttpRequest req = HttpRequest.newBuilder(uri).GET().build();
-            return client.send(req, HttpResponse.BodyHandlers.discarding()).statusCode() < 500;
-        } catch (Exception e) {
-            return false;
-        }
     }
 
     private static final List<String> ERROR_INDICATORS = List.of(

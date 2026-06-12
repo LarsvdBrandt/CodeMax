@@ -1,57 +1,3 @@
-# ─────────────────────────────────────────────────────────────────────────────
-# docker-compose.yml — Full-stack local development
-#
-# DESIGN PHILOSOPHY
-# ─────────────────
-# Every value that could change between environments is an env variable.
-# Nothing is hardcoded. Service discovery uses Docker DNS (service names),
-# never IP addresses. Ports are injected from .env so multiple stacks can
-# run side-by-side on the same machine without conflicts.
-#
-# HOW TO START
-# ─────────────
-#   cp .env.example .env          # fill in your values
-#   cp server/.env.example server/.env
-#   docker-compose up             # start all services
-#   docker-compose up --build     # rebuild images first
-#   docker-compose down -v        # stop + remove volumes
-#
-# RUNNING MULTIPLE STACKS SIMULTANEOUSLY
-# ───────────────────────────────────────
-# Each stack needs a unique project name and unique host ports.
-# Use different .env files:
-#
-#   # Stack 1 (default)
-#   COMPOSE_PROJECT_NAME=myapp
-#   FRONTEND_PORT=5173
-#   BACKEND_PORT=3000
-#   MONGO_PORT=27017
-#
-#   # Stack 2 (e.g. a second feature branch)
-#   COMPOSE_PROJECT_NAME=myapp-feat
-#   FRONTEND_PORT=5174
-#   BACKEND_PORT=3001
-#   MONGO_PORT=27018
-#
-#   docker-compose --env-file .env.stack2 up
-#
-# SERVICE DISCOVERY
-# ─────────────────
-# Services communicate via Docker DNS using service names, NOT IPs or localhost:
-#   frontend  → reaches backend at  http://backend:${BACKEND_INTERNAL_PORT}
-#   backend   → reaches mongo   at  mongodb://mongo:${MONGO_INTERNAL_PORT}
-# ${BACKEND_INTERNAL_PORT} and ${MONGO_INTERNAL_PORT} are container-internal
-# ports (what the process binds to inside the container). These are separate
-# from host ports (what you access from your laptop).
-#
-# ADDING A NEW SERVICE (e.g. Redis, a worker)
-# ────────────────────────────────────────────
-# 1. Add REDIS_PORT, REDIS_INTERNAL_PORT to .env.example
-# 2. Add the service block below following the same pattern
-# 3. Add it to `depends_on` of any service that needs it
-# 4. Reference it in that service's environment as: redis://redis:${REDIS_INTERNAL_PORT}
-# ─────────────────────────────────────────────────────────────────────────────
-
 version: '3.9'
 
 # ── Re-usable logging config ──────────────────────────────────────────────────
@@ -63,100 +9,73 @@ x-logging: &default-logging
 
 services:
 
-  # ── MongoDB ─────────────────────────────────────────────────────────────────
-  # Internal port: ${MONGO_INTERNAL_PORT} (default 27017)
-  # Host port:     ${MONGO_PORT}          (default 27017, change per stack)
-  # Connection string used by backend: mongodb://mongo:${MONGO_INTERNAL_PORT}/${MONGO_DB_NAME}
-  mongo:
-    image: mongo:${MONGO_IMAGE_TAG:-7}
-    restart: unless-stopped
-    container_name: ${COMPOSE_PROJECT_NAME:-apptemplate}_mongo
-    ports:
-      - '${MONGO_PORT:-27017}:${MONGO_INTERNAL_PORT:-27017}'
-    volumes:
-      - mongo_data:/data/db
-      - ./docker/mongo/init:/docker-entrypoint-initdb.d:ro   # optional init scripts
-    environment:
-      MONGO_INITDB_DATABASE: ${MONGO_DB_NAME:-apptemplate}
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-}       # leave blank for no auth (dev only)
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-}
-    healthcheck:
-      test: ['CMD', 'mongosh', '--eval', 'db.adminCommand("ping")']
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    logging: *default-logging
-
-  # ── Backend (Express API) ────────────────────────────────────────────────────
-  # Internal port: ${BACKEND_INTERNAL_PORT} (default 3000)
-  # Host port:     ${BACKEND_PORT}          (default 3000, change per stack)
-  # MongoDB URL:   mongodb://mongo:${MONGO_INTERNAL_PORT}/${MONGO_DB_NAME}
-  #   (the compose override below replaces whatever MONGODB_URI is in server/.env)
-  backend:
+  # ── nginx — sole external entrypoint ─────────────────────────────────────────
+  # Routes /api/* → backend:3000 and /* → frontend:5173
+  nginx:
     build:
-      context: ./server
+      context: ./docker/nginx
       dockerfile: Dockerfile
-      target: ${DOCKER_TARGET:-dev}   # 'dev' or 'prod' — see server/Dockerfile
     restart: unless-stopped
-    container_name: ${COMPOSE_PROJECT_NAME:-apptemplate}_backend
+    container_name: ${COMPOSE_PROJECT_NAME:-app}_nginx
     ports:
-      - '${BACKEND_PORT:-3000}:${BACKEND_INTERNAL_PORT:-3000}'
-    env_file:
-      - ./server/.env      # base secrets (Atlas URI, OAuth keys, etc.)
-    environment:
-      # Override MONGODB_URI so the backend always uses the local mongo container
-      # in compose, regardless of what server/.env says.
-      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-}${MONGO_ROOT_PASSWORD:+:}${MONGO_ROOT_PASSWORD:-}${MONGO_ROOT_USER:+@}mongo:${MONGO_INTERNAL_PORT:-27017}/${MONGO_DB_NAME:-apptemplate}
-      PORT: ${BACKEND_INTERNAL_PORT:-3000}
-      # APP_URL must match the frontend's public URL so OAuth redirects work
-      APP_URL: ${APP_URL:-http://localhost:${FRONTEND_PORT:-5173}}
-      NODE_ENV: ${NODE_ENV:-development}
+      - '${NGINX_PORT:-3080}:80'
     depends_on:
-      mongo:
-        condition: service_healthy
-    volumes:
-      # Mount src so nodemon picks up file changes without rebuilding
-      - ./server/src:/app/src
-      - ./server/nodemon.json:/app/nodemon.json
-      # node_modules stays inside the container (avoids platform conflicts)
-      - backend_nm:/app/node_modules
+      - backend
+      - frontend
+    networks:
+      - app_net
     logging: *default-logging
 
   # ── Frontend (Vite dev server) ───────────────────────────────────────────────
-  # Internal port: ${FRONTEND_INTERNAL_PORT} (default 5173)
-  # Host port:     ${FRONTEND_PORT}          (default 5173, change per stack)
-  # Backend URL seen by the browser: http://localhost:${BACKEND_PORT}
-  #   (browser requests go through the host machine, not through Docker DNS)
   frontend:
     build:
       context: .
       dockerfile: Dockerfile
-      target: ${DOCKER_TARGET:-dev}
     restart: unless-stopped
-    container_name: ${COMPOSE_PROJECT_NAME:-apptemplate}_frontend
-    ports:
-      - '${FRONTEND_PORT:-5173}:${FRONTEND_INTERNAL_PORT:-5173}'
-    env_file:
-      - .env
+    container_name: ${COMPOSE_PROJECT_NAME:-app}_frontend
     environment:
-      # VITE_ vars are embedded at build time — they must point to the host-side
-      # backend port because the browser runs on the host, not inside Docker.
-      VITE_API_BASE_URL: http://localhost:${BACKEND_PORT:-3000}
-      VITE_APP_NAME: ${APP_NAME:-AppTemplate}
-      # Pass internal port to Vite so it binds correctly inside the container
-      VITE_PORT: ${FRONTEND_INTERNAL_PORT:-5173}
+      VITE_PORT: '5173'
+      VITE_APP_NAME: '${APP_NAME:-My App}'
+    networks:
+      - app_net
+    logging: *default-logging
+
+  # ── Backend (Express API) ─────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    container_name: ${COMPOSE_PROJECT_NAME:-app}_backend
+    environment:
+      PORT: '3000'
+      MONGODB_URI: 'mongodb://mongo:27017/${MONGO_DB_NAME:-app}'
+      JWT_SECRET: '${JWT_SECRET}'
+      JWT_EXPIRES_IN: '7d'
+      NODE_ENV: 'development'
     depends_on:
-      - backend
+      - mongo
+    networks:
+      - app_net
+    logging: *default-logging
+
+  # ── MongoDB ──────────────────────────────────────────────────────────────────
+  # No credentials — project-isolated, development only
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    container_name: ${COMPOSE_PROJECT_NAME:-app}_mongo
     volumes:
-      - ./src:/app/src
-      - ./public:/app/public
-      - frontend_nm:/app/node_modules
+      - mongo_data:/data/db
+    networks:
+      - app_net
     logging: *default-logging
 
 volumes:
   mongo_data:
-    name: ${COMPOSE_PROJECT_NAME:-apptemplate}_mongo_data
-  backend_nm:
-    name: ${COMPOSE_PROJECT_NAME:-apptemplate}_backend_nm
-  frontend_nm:
-    name: ${COMPOSE_PROJECT_NAME:-apptemplate}_frontend_nm
+    name: ${COMPOSE_PROJECT_NAME:-app}_mongo_data
+
+networks:
+  app_net:
+    name: ${COMPOSE_PROJECT_NAME:-app}_net
+    driver: bridge
