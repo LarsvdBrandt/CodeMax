@@ -19,13 +19,19 @@ import { Button } from '@/components/ui/Button'
 
 // ── Nav items configuration ───────────────────────────────────────────────────
 // `section` scrolls to that element id on the home page.
-// Omit `section` to use `href` as a router link instead.
-const NAV_ITEMS = [
+// `href` navigates to that route via React Router.
+interface NavItem {
+  label:    string
+  section?: string
+  href?:    string
+}
+
+const NAV_ITEMS: NavItem[] = [
   { label: 'Features', section: 'features' },
   { label: 'About',    section: 'about'    },
   { label: 'Work',     section: 'work'     },
   { label: 'Contact',  section: 'contact'  },
-] as const
+]
 
 export function Navbar() {
   const [open,      setOpen]      = useState(false)   // mobile menu
@@ -47,12 +53,13 @@ export function Navbar() {
   // Close mobile menu on route change
   useEffect(() => setOpen(false), [location])
 
-  function handleNavClick(item: typeof NAV_ITEMS[number]) {
-    if (item.section) {
+  function handleNavClick(item: NavItem) {
+    if (item.href) {
+      navigate(item.href)
+    } else if (item.section) {
       if (!isHome) {
-        // Navigate home first, then scroll after paint
         navigate('/')
-        setTimeout(() => scrollTo(item.section), 100)
+        setTimeout(() => scrollTo(item.section!), 100)
       } else {
         scrollTo(item.section)
       }
@@ -72,7 +79,7 @@ export function Navbar() {
         {/* ── Brand ──────────────────────────────────────────────────────── */}
         <Link to="/" className="flex items-center gap-2 font-bold text-lg tracking-tight">
           <Zap className="h-5 w-5 text-accent" />
-          <span className="gradient-text">AppTemplate</span>
+          <span className="gradient-text">{import.meta.env.VITE_APP_NAME ?? 'AppTemplate'}</span>
         </Link>
 
         {/* ── Desktop nav ────────────────────────────────────────────────── */}

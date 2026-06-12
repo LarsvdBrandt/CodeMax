@@ -211,10 +211,15 @@ export default function WelcomePage() {
         setLoading(true);
         try {
           const { questions: qs } = await getProjectQuestions(originalRequest);
-          setQuestions(qs);
-          setAnswers({});
-          setPhase("questions");
-          addAiMessage("Let me grab a few quick details to personalise your app ✦");
+          if (qs && qs.length > 0) {
+            setQuestions(qs);
+            setAnswers({});
+            setPhase("questions");
+            addAiMessage("Let me grab a few quick details to personalise your app ✦");
+          } else {
+            // Empty questions — build with defaults
+            await startBuilding({});
+          }
         } catch {
           // Questions failed — go straight to building
           await startBuilding({});
@@ -253,12 +258,19 @@ export default function WelcomePage() {
       const name = businessName?.trim()
         ? businessName.trim()
         : originalRequest.slice(0, 40).replace(/[^a-zA-Z0-9\s]/g, "").trim() || "My App";
-      const { project_id } = await createProject(name, originalRequest, finalAnswers);
+      const result = await createProject(name, originalRequest, finalAnswers);
+      const projectId = result?.project_id;
+      if (!projectId) {
+        setError("Server did not return a project ID — please try again.");
+        setPhase(questions.length > 0 ? "questions" : "review");
+        return;
+      }
       addAiMessage("Creating your app now…");
-      router.push(`/project/${project_id}`);
-    } catch {
-      setError("Failed to create project. Please try again.");
-      setPhase("questions");
+      router.push(`/project/${projectId}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Failed to create project.";
+      setError(msg);
+      setPhase(questions.length > 0 ? "questions" : "review");
     } finally {
       setLoading(false);
     }

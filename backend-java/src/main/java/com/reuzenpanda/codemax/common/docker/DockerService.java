@@ -26,9 +26,9 @@ public class DockerService {
     private static final String IMAGE = "node:20-alpine";
     private static final String NETWORK = "codemax_network";
     private static final String VOLUME_NAME = "codemax_projects";
-    private static final int PORT_START = 4000;
-    private static final int PORT_END = 5000;
     private static final int VITE_INTERNAL_PORT = 5173;
+
+    public record PreviewResult(String containerId, int port) {}
 
     private final DockerClient docker;
 
@@ -47,11 +47,11 @@ public class DockerService {
     /**
      * Create (or recreate) and start the preview container for a full-stack project.
      * Runs both Express (port 3000 internal) and Vite dev server (port 5173 internal).
-     * The external port binds to Vite; the browser proxies /api/* to Express via Vite.
-     * Returns the container ID.
+     * Docker auto-assigns a free host port — no race condition with manual port selection.
+     * Returns PreviewResult with the container ID and the actual assigned host port.
      */
-    public String provisionPreview(UUID projectId, String existingContainerId, int port,
-                                    Map<String, String> envVars) {
+    public PreviewResult provisionPreview(UUID projectId, String existingContainerId,
+                                           Map<String, String> envVars) {
         if (existingContainerId != null && !existingContainerId.isBlank()) {
             try {
                 docker.stopContainerCmd(existingContainerId).exec();
@@ -63,32 +63,48 @@ public class DockerService {
         try { docker.removeContainerCmd(name).withForce(true).exec(); } catch (Exception ignored) {}
 
         String base = "/projects/" + projectId;
-        // Install deps for both root (Vite) and server (Express), then start both
         String cmd = "cd " + base + "/server && npm install --silent && npm run dev & " +
                      "cd " + base + " && npm install --silent && " +
                      "VITE_PORT=" + VITE_INTERNAL_PORT + " npm run dev -- --host 0.0.0.0";
 
-        // Build env list from provided map plus defaults
         List<String> env = new ArrayList<>();
         env.add("NODE_ENV=development");
         env.add("CHOKIDAR_USEPOLLING=true");
         env.add("VITE_PORT=" + VITE_INTERNAL_PORT);
         envVars.forEach((k, v) -> env.add(k + "=" + v));
 
+        // Bind to port 0 — Docker will assign the next available host port automatically
         CreateContainerResponse container = docker.createContainerCmd(IMAGE)
             .withName(name)
             .withCmd("/bin/sh", "-c", cmd)
             .withEnv(env.toArray(String[]::new))
             .withHostConfig(HostConfig.newHostConfig()
                 .withBinds(new Bind(VOLUME_NAME, new Volume("/projects"), AccessMode.rw, SELContext.none, true))
-                .withPortBindings(PortBinding.parse(port + ":" + VITE_INTERNAL_PORT))
+                .withPortBindings(PortBinding.parse("0:" + VITE_INTERNAL_PORT))
                 .withNetworkMode(NETWORK)
                 .withRestartPolicy(RestartPolicy.noRestart()))
             .withExposedPorts(ExposedPort.tcp(VITE_INTERNAL_PORT))
             .exec();
 
         docker.startContainerCmd(container.getId()).exec();
-        return container.getId();
+
+        // Inspect to find the actual host port Docker assigned
+        int hostPort = resolveHostPort(container.getId());
+        return new PreviewResult(container.getId(), hostPort);
+    }
+
+    private int resolveHostPort(String containerId) {
+        try {
+            var info = docker.inspectContainerCmd(containerId).exec();
+            var bindings = info.getNetworkSettings().getPorts().getBindings();
+            var portBindings = bindings.get(ExposedPort.tcp(VITE_INTERNAL_PORT));
+            if (portBindings != null && portBindings.length > 0) {
+                return Integer.parseInt(portBindings[0].getHostPortSpec());
+            }
+        } catch (Exception e) {
+            log.warn("Could not resolve host port for container {}: {}", containerId, e.getMessage());
+        }
+        throw new IllegalStateException("Docker did not assign a host port for container " + containerId);
     }
 
     /** Parse a .env file into a key→value map. Lines starting with # are ignored. */
@@ -171,16 +187,6 @@ public class DockerService {
         } catch (Exception e) {
             return false;
         }
-    }
-
-    /** Find a free port in the 4000–5000 range. */
-    public int findFreePort() {
-        for (int port = PORT_START; port <= PORT_END; port++) {
-            try (var s = new java.net.ServerSocket(port)) {
-                return port;
-            } catch (IOException ignored) {}
-        }
-        throw new IllegalStateException("No free port found in range " + PORT_START + "-" + PORT_END);
     }
 
     /** Write nginx location block for the project. */

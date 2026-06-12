@@ -28,15 +28,14 @@ interface EmailDriver {
 // ── Resend driver (primary) ───────────────────────────────────────────────────
 
 async function getResendDriver(): Promise<EmailDriver> {
-  const { Resend } = await import('resend')
-  const client     = new Resend(env.RESEND_API_KEY ?? '')
-
   return {
     async send({ to, subject, html }) {
       if (!env.RESEND_API_KEY) {
         console.warn('⚠️  RESEND_API_KEY not set — email not sent')
         return
       }
+      const { Resend } = await import('resend')
+      const client = new Resend(env.RESEND_API_KEY)
       const { error } = await client.emails.send({ from: env.FROM_EMAIL, to, subject, html })
       if (error) throw new Error(`Resend error: ${error.message}`)
     },

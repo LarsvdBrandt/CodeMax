@@ -72,7 +72,6 @@ public class PipelineService {
         try {
             markRunning(task, project, prompt);
             Path projectDir = Path.of(props.getProjectsDir(), projectId.toString());
-            int port = docker.findFreePort();
             Map<String, String> answers = project.getAnswers() != null ? project.getAnswers() : Map.of();
 
             pipeLog(task, "seed_template", "running", "Seeding project template");
@@ -80,7 +79,7 @@ public class PipelineService {
             pipeLog(task, "seed_template", "done", "Template copied");
 
             pipeLog(task, "env_vars", "running", "Configuring environment");
-            injectEnvVars(projectDir, projectId, port, answers);
+            injectEnvVars(projectDir, projectId, answers);
             pipeLog(task, "env_vars", "done", "Environment configured");
 
             applyViteProxy(projectDir);
@@ -122,12 +121,14 @@ public class PipelineService {
 
             pipeLog(task, "build", "running", "Starting preview container");
             Map<String, String> envVars = buildContainerEnv(projectDir);
-            String containerId = docker.provisionPreview(projectId, project.getContainerId(), port, envVars);
-            project.setContainerId(containerId);
-            project.setPreviewPort(port);
+            DockerService.PreviewResult preview = docker.provisionPreview(projectId, project.getContainerId(), envVars);
+            project.setContainerId(preview.containerId());
+            project.setPreviewPort(preview.port());
             projectRepo.save(project);
-            pipeLog(task, "build", "running", "Container started on port " + port);
+            pipeLog(task, "build", "running", "Container started on port " + preview.port());
 
+            int port = preview.port();
+            String containerId = preview.containerId();
             boolean ready = false;
             for (int round = 0; round < MAX_FIX_ROUNDS && !ready; round++) {
                 Thread.sleep(25_000);
@@ -195,12 +196,12 @@ public class PipelineService {
 
     // ── Step 2: Inject env vars ───────────────────────────────────────────────
 
-    private void injectEnvVars(Path projectDir, UUID projectId, int port,
+    private void injectEnvVars(Path projectDir, UUID projectId,
                                 Map<String, String> answers) throws IOException {
         String dbName = "proj_" + projectId.toString().replace("-", "_");
         String mongoUri = props.getMongoRootUrl() + "/" + dbName + "?authSource=admin";
         String jwtSecret = generateSecret();
-        String appUrl = "http://localhost:" + port;
+        String appUrl = "http://localhost:3000";
         String appName = answers.getOrDefault("business_name", "My App");
 
         Map<String, String> frontendEnv = new LinkedHashMap<>();
@@ -433,6 +434,11 @@ public class PipelineService {
             - Loading state: Skeleton; empty state: EmptyState with create CTA
             - Errors: toast.error(); success: toast.success()
             - Strict TypeScript, no 'any'
+            - MongoDB items use _id (not id) — always access item._id, never item.id
+            - NEVER use useNavigate() or navigate() — do NOT navigate after create/edit/delete
+            - After create: add item to local state array, show toast, close modal
+            - After edit: update item in local state array, show toast, close modal
+            - After delete: remove item from local state array, show toast
             Return ONLY the complete TSX file, no markdown fences.
             """.formatted(a.featureName());
         String content = stripFences(ai.chat(sys,
@@ -456,12 +462,29 @@ public class PipelineService {
         save(projectDir, "src/App.tsx", stripFences(ai.chat(appSys, curApp)));
 
         String curNav = loadFile(projectDir, "src/components/layout/Navbar.tsx");
-        String navSys = """
-            Update the NAV_ITEMS (or equivalent) array in Navbar.tsx to replace any Dashboard entry
-            with: { label: '%s', href: '%s' } (use whatever shape the existing items use).
-            Keep all other nav items identical. Return ONLY the complete file, no fences.
-            """.formatted(a.featureName(), a.featureRoute());
-        save(projectDir, "src/components/layout/Navbar.tsx", stripFences(ai.chat(navSys, curNav)));
+        if (!curNav.isBlank()) {
+            // Direct string replace is more reliable than AI for two simple substitutions
+            String updatedNav = curNav
+                // Replace hardcoded brand name with env var
+                .replace(">AppTemplate<", ">{import.meta.env.VITE_APP_NAME ?? 'AppTemplate'}<")
+                // Replace the 'Work' home-page scroll entry with the feature page route
+                .replace("{ label: 'Work',     section: 'work'     }",
+                    "{ label: '" + a.featureName() + "', href: '" + a.featureRoute() + "' }")
+                .replace("{ label: 'Work', section: 'work' }",
+                    "{ label: '" + a.featureName() + "', href: '" + a.featureRoute() + "' }");
+            // If the simple replace didn't update the nav route, fall back to AI
+            if (updatedNav.contains("section: 'work'")) {
+                String navSys = """
+                    Update the NAV_ITEMS (or equivalent) array in Navbar.tsx to replace any Dashboard/work entry
+                    with: { label: '%s', href: '%s' } (use whatever shape the existing items use).
+                    Also replace any hardcoded 'AppTemplate' text with: {import.meta.env.VITE_APP_NAME ?? 'AppTemplate'}
+                    Keep all other nav items identical. Return ONLY the complete file, no fences.
+                    """.formatted(a.featureName(), a.featureRoute());
+                save(projectDir, "src/components/layout/Navbar.tsx", stripFences(ai.chat(navSys, curNav)));
+            } else {
+                save(projectDir, "src/components/layout/Navbar.tsx", updatedNav);
+            }
+        }
     }
 
     // ── Step 11: Branding ─────────────────────────────────────────────────────
@@ -469,10 +492,18 @@ public class PipelineService {
     private void updateBranding(Path projectDir, String aiContext, TemplateAnalysis a,
                                  Map<String, String> answers) throws IOException {
         if (!a.accentColorRgb().isBlank()) {
+            String rgb = a.accentColorRgb();
+            // theme.ts — read by main.tsx at runtime to inject CSS custom properties
             String theme = loadFile(projectDir, "src/config/theme.ts");
             if (!theme.isBlank()) {
                 save(projectDir, "src/config/theme.ts",
-                    theme.replaceAll("accent:\\s*'[0-9 ]+'", "accent: '" + a.accentColorRgb() + "'"));
+                    theme.replaceAll("accent:\\s*'[0-9 ]+'", "accent: '" + rgb + "'"));
+            }
+            // globals.css — also update the static fallback so SSR/initial paint is correct
+            String css = loadFile(projectDir, "src/styles/globals.css");
+            if (!css.isBlank()) {
+                save(projectDir, "src/styles/globals.css",
+                    css.replaceAll("--color-accent:\\s*[0-9 ]+;", "--color-accent: " + rgb + ";"));
             }
         }
 

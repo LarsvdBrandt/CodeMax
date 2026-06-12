@@ -1,6 +1,7 @@
 com/reuzenpanda/codemax/projects/entities/ProjectFile.class
 com/reuzenpanda/codemax/projects/dtos/ProjectFileDto.class
 com/reuzenpanda/codemax/projects/entities/Project.class
+com/reuzenpanda/codemax/common/docker/DockerService$PreviewResult.class
 com/reuzenpanda/codemax/projects/repositories/ProjectFileRepository.class
 com/reuzenpanda/codemax/tasks/entities/Task.class
 com/reuzenpanda/codemax/tasks/pipeline/PipelineService.class
