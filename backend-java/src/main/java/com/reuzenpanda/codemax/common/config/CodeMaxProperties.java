@@ -21,7 +21,4 @@ public class CodeMaxProperties {
     private String plannerModel = "gpt-4o";
     private String codeModel    = "gpt-4o";
     private String reviewModel  = "gpt-4o";
-    // private String plannerModel = "gemini-2.5-pro";
-    // private String codeModel    = "claude-sonnet-4-5";
-    // private String reviewModel  = "claude-sonnet-4-5";
 }
