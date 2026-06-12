@@ -48,10 +48,13 @@ public class RouteGenerator {
             "Entity: " + entity.name() + " (plural: " + entity.plural() + ", path: " + entity.routePath() + ")\n" +
             "Include all CRUD endpoints: GET / (list user's items), POST / (create), " +
             "GET /:id (get one), PUT /:id (update), DELETE /:id (delete).\n" +
-            "All routes must use the 'authenticate' middleware imported from '../middleware/auth'.\n" +
+            "CRITICAL — use EXACTLY this import for auth middleware (the file is authenticate.ts, NOT auth.ts):\n" +
+            "  import { authenticate } from '../middleware/authenticate'\n" +
+            "All routes must call authenticate as middleware.\n" +
             "Filter all queries by { userId: req.user._id } — users can only access their own items.\n" +
             "Import the model from '../models/" + entity.name() + "'.\n" +
-            "Output ONLY the TypeScript file content. No markdown. No explanation.";
+            "NEVER touch or regenerate auth.ts, User.ts, or authenticate.ts — those already exist.\n" +
+            "Output ONLY the TypeScript file content for " + entity.plural() + ".ts. No markdown. No explanation.";
     }
 
     private void deleteTodo(Path projectDir, String relativePath) {
