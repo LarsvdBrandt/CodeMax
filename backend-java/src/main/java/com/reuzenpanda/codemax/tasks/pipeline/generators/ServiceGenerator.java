@@ -44,17 +44,21 @@ public class ServiceGenerator {
     }
 
     private String buildUserPrompt(String appName, EntitySpec entity) {
-        return "Generate a complete frontend API service for '" + appName + "' — entity: " + entity.name() + ".\n" +
-            "Plural: " + entity.plural() + ", route path: " + entity.routePath() + "\n" +
-            "Export these async functions:\n" +
-            "  - get" + entity.name() + "s(token: string): Promise<I" + entity.name() + "[]>\n" +
-            "  - create" + entity.name() + "(data: Create" + entity.name() + "Request, token: string): Promise<I" + entity.name() + ">\n" +
-            "  - update" + entity.name() + "(id: string, data: Update" + entity.name() + "Request, token: string): Promise<I" + entity.name() + ">\n" +
-            "  - delete" + entity.name() + "(id: string, token: string): Promise<void>\n" +
-            "Use fetch() with Authorization: Bearer {token} header.\n" +
-            "Base URL: import.meta.env.VITE_API_URL\n" +
-            "Throw errors on non-ok responses (check response.ok, throw new Error(await response.text())).\n" +
-            "Import types from '../types'.\n" +
+        String n = entity.name();
+        String p = entity.plural();
+        return "Generate a frontend API service file for '" + appName + "' — entity: " + n + ".\n" +
+            "Plural: " + p + ", API base path: /api/" + p + "\n\n" +
+            "CRITICAL — use EXACTLY these named export function signatures (no default export, no service object):\n" +
+            "  export async function get" + n + "s(token: string): Promise<I" + n + "[]>\n" +
+            "  export async function create" + n + "(data: Create" + n + "Request, token: string): Promise<I" + n + ">\n" +
+            "  export async function update" + n + "(id: string, data: Update" + n + "Request, token: string): Promise<I" + n + ">\n" +
+            "  export async function delete" + n + "(id: string, token: string): Promise<void>\n\n" +
+            "Rules:\n" +
+            "- Use fetch() with 'Authorization': 'Bearer ' + token header\n" +
+            "- Base URL: import.meta.env.VITE_API_URL (may be empty string for same-origin proxy)\n" +
+            "- On non-ok response: throw new Error(await response.text())\n" +
+            "- Import types from '../types': I" + n + ", Create" + n + "Request, Update" + n + "Request\n" +
+            "- NO default export. NO service object. ONLY the four named async functions above.\n" +
             "Output ONLY the TypeScript file content. No markdown. No explanation.";
     }
 

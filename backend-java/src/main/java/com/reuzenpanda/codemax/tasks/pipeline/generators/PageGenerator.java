@@ -51,23 +51,30 @@ public class PageGenerator {
             .map(f -> f.name() + " (" + f.type() + (f.required() ? ", required" : "") + ")")
             .collect(Collectors.joining(", "));
 
-        return "Generate a complete React page component for managing '" + entity.name() + "s' in the '" + appName + "' app.\n\n" +
-            "Entity: " + entity.name() + " (plural: " + entity.plural() + ")\n" +
+        String n = entity.name();
+        String p = entity.plural();
+        return "Generate a complete React page component for managing " + n + "s in the '" + appName + "' app.\n\n" +
+            "Entity: " + n + " (plural: " + p + ")\n" +
             "Fields: " + fields + "\n\n" +
+            "CRITICAL — use EXACTLY these import lines at the top of the file:\n" +
+            "  import { get" + n + "s, create" + n + ", update" + n + ", delete" + n + " } from '../services/" + p + "'\n" +
+            "  import { I" + n + ", Create" + n + "Request, Update" + n + "Request } from '../types'\n" +
+            "  import { useAuth } from '@/hooks/useAuth'\n\n" +
             "The page must:\n" +
-            "1. Import { useAuth } from '@/hooks/useAuth' to get the token\n" +
-            "2. Use the service functions from '../services/" + entity.plural() + "'\n" +
-            "3. Import types from '../types'\n" +
-            "4. Show a loading skeleton while fetching (use the template's skeleton pattern)\n" +
-            "5. Show a list/table of items with Edit and Delete buttons per item\n" +
-            "6. Have a 'Create " + entity.name() + "' button that opens an inline modal or form\n" +
-            "7. Modal contains form fields for all entity fields\n" +
-            "8. After create: add to local state, show toast, close modal — NO navigate()\n" +
-            "9. After edit: update local state, show toast, close modal — NO navigate()\n" +
-            "10. After delete: remove from local state, show toast — NO navigate()\n" +
-            "11. Use only existing UI components from @/components/ui (Button, Input, Modal, Toast, etc.)\n" +
-            "12. The component must be a default export named '" + entity.name() + "sPage'\n\n" +
-            "Available UI components: " + String.join(", ", knowledge.availableComponents()) + "\n\n" +
+            "1. Call get" + n + "s(token) on mount to load items into local state\n" +
+            "2. Show a loading skeleton while fetching\n" +
+            "3. Show a list/table of items with Edit and Delete buttons per row\n" +
+            "4. Have a 'Create " + n + "' button that opens a modal with a form\n" +
+            "5. Modal form has an input for each field: " + fields + "\n" +
+            "6. After create: call create" + n + "(), add result to state array, show toast, close modal\n" +
+            "7. After edit: call update" + n + "(), update item in state array, show toast, close modal\n" +
+            "8. After delete: call delete" + n + "(), remove item from state array, show toast\n" +
+            "9. NEVER call navigate() or useNavigate() — only update local state\n" +
+            "10. Use _id (not id) when accessing MongoDB items\n" +
+            "11. Use only UI components from '@/components/ui'\n" +
+            "12. Default export must be named '" + n + "sPage'\n\n" +
+            "Available UI components (import from '@/components/ui'): " +
+            String.join(", ", knowledge.availableComponents()) + "\n\n" +
             "Output ONLY the complete TSX file content. No markdown fences. No explanation.";
     }
 

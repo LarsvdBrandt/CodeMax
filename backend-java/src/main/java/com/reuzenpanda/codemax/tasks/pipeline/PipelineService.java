@@ -89,6 +89,7 @@ public class PipelineService {
             // ── Infrastructure setup ──────────────────────────────────────────
             pipeLog(task, "seed_template", "running", "Seeding project template");
             seedTemplate(projectDir);
+            persistSeededFiles(projectDir, projectId);
             pipeLog(task, "seed_template", "done", "Template copied");
 
             pipeLog(task, "env_vars", "running", "Configuring environment");
@@ -251,6 +252,47 @@ public class PipelineService {
                     Files.copy(is, dest);
                 }
             }
+        }
+    }
+
+    // ── Step 1b: Persist seeded files to DB so the file viewer shows them ────
+
+    private static final Set<String> TEXT_EXTENSIONS = Set.of(
+        ".ts", ".tsx", ".js", ".jsx", ".json", ".css", ".html",
+        ".md", ".txt", ".yaml", ".yml", ".env", ".mjs", ".cjs"
+    );
+
+    private void persistSeededFiles(Path projectDir, UUID projectId) {
+        try (Stream<Path> walk = Files.walk(projectDir)) {
+            walk.filter(Files::isRegularFile)
+                .filter(p -> {
+                    String name = p.getFileName().toString();
+                    return TEXT_EXTENSIONS.stream().anyMatch(name::endsWith);
+                })
+                .filter(p -> {
+                    String rel = projectDir.relativize(p).toString();
+                    return !rel.contains("node_modules") && !rel.startsWith("dist/")
+                        && !rel.startsWith(".git/") && !rel.equals(".env")
+                        && !rel.equals("server/.env");
+                })
+                .forEach(p -> {
+                    try {
+                        String rel = projectDir.relativize(p).toString();
+                        String content = Files.readString(p);
+                        // Use fileRepo directly to avoid the content-blank guard in save()
+                        ProjectFile pf = fileRepo.findByProjectIdAndFilePath(projectId, rel)
+                            .orElseGet(() -> {
+                                ProjectFile f = new ProjectFile();
+                                f.setProjectId(projectId);
+                                f.setFilePath(rel);
+                                return f;
+                            });
+                        pf.setContent(content);
+                        fileRepo.save(pf);
+                    } catch (IOException ignored) {}
+                });
+        } catch (IOException e) {
+            log.warn("persistSeededFiles: could not walk project dir: {}", e.getMessage());
         }
     }
 
