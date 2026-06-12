@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // HeroSection — full-viewport landing area with animated headline and CTAs.
-// Replace the copy, gradient, and background pattern as needed.
+// All copy is driven by src/config/content.ts — edit that file to customise.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useNavigate } from 'react-router-dom'
@@ -8,6 +8,7 @@ import { motion } from 'framer-motion'
 import { ArrowRight, Play } from 'lucide-react'
 import { Button } from '@/components/ui/Button'
 import { useScrollTo } from '@/hooks/useScrollTo'
+import { CONTENT } from '@/config/content'
 
 // Stagger children animation helper
 const container = {
@@ -29,14 +30,12 @@ export function HeroSection() {
       className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden px-6 pt-20"
     >
       {/* ── Background decoration ─────────────────────────────────────── */}
-      {/* Radial glow behind the headline */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 flex items-center justify-center"
       >
         <div className="h-[600px] w-[600px] rounded-full bg-accent/10 blur-[120px]" />
       </div>
-      {/* Subtle dot grid */}
       <div
         aria-hidden
         className="pointer-events-none absolute inset-0 opacity-[0.03]"
@@ -56,7 +55,7 @@ export function HeroSection() {
         {/* Badge */}
         <motion.div variants={item} className="mb-6 inline-flex">
           <span className="rounded-full border border-accent/30 bg-accent/10 px-4 py-1.5 text-xs font-medium text-accent">
-            ✦ Version 1.0 — Now available
+            {CONTENT.hero.badge}
           </span>
         </motion.div>
 
@@ -65,8 +64,7 @@ export function HeroSection() {
           variants={item}
           className="text-5xl font-extrabold leading-[1.1] tracking-tight md:text-7xl"
         >
-          Build faster.{' '}
-          <span className="gradient-text">Ship better.</span>
+          <span className="gradient-text">{CONTENT.hero.headline}</span>
         </motion.h1>
 
         {/* Sub-headline */}
@@ -74,8 +72,7 @@ export function HeroSection() {
           variants={item}
           className="mt-6 text-lg text-muted max-w-2xl mx-auto leading-relaxed"
         >
-          A production-ready React + TypeScript template with auth, theming,
-          and API integration — so you can focus on what makes your app unique.
+          {CONTENT.hero.subheadline}
         </motion.p>
 
         {/* CTAs */}
@@ -85,7 +82,7 @@ export function HeroSection() {
             rightIcon={<ArrowRight className="h-4 w-4" />}
             onClick={() => navigate('/register')}
           >
-            Get started free
+            {CONTENT.hero.ctaPrimary}
           </Button>
           <Button
             variant="secondary"
@@ -93,13 +90,13 @@ export function HeroSection() {
             leftIcon={<Play className="h-4 w-4" />}
             onClick={() => scrollTo('features')}
           >
-            See how it works
+            {CONTENT.hero.ctaSecondary}
           </Button>
         </motion.div>
 
-        {/* Social proof */}
+        {/* Footnote */}
         <motion.p variants={item} className="mt-10 text-xs text-muted">
-          No credit card required · MIT licence · 5-minute setup
+          {CONTENT.hero.footnote}
         </motion.p>
       </motion.div>
 

@@ -16,6 +16,7 @@ import { Menu, X, LogIn, LogOut, User, Zap, LayoutDashboard } from 'lucide-react
 import { useScrollTo } from '@/hooks/useScrollTo'
 import { useAuth } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/Button'
+import { CONTENT } from '@/config/content'
 
 // ── Nav items configuration ───────────────────────────────────────────────────
 // `section` scrolls to that element id on the home page.
@@ -79,7 +80,7 @@ export function Navbar() {
         {/* ── Brand ──────────────────────────────────────────────────────── */}
         <Link to="/" className="flex items-center gap-2 font-bold text-lg tracking-tight">
           <Zap className="h-5 w-5 text-accent" />
-          <span className="gradient-text">{import.meta.env.VITE_APP_NAME ?? 'AppTemplate'}</span>
+          <span className="gradient-text">{CONTENT.brand.name}</span>
         </Link>
 
         {/* ── Desktop nav ────────────────────────────────────────────────── */}

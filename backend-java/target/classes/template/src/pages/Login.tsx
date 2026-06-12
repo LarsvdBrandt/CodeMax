@@ -12,6 +12,7 @@ import { Button }  from '@/components/ui/Button'
 import { Divider } from '@/components/ui/Divider'
 import { useAuth } from '@/hooks/useAuth'
 import { api }     from '@/config/api'
+import { CONTENT } from '@/config/content'
 
 export default function Login() {
   const [email,    setEmail]    = useState('')
@@ -54,7 +55,7 @@ export default function Login() {
         {/* Logo */}
         <Link to="/" className="flex items-center justify-center gap-2 font-bold text-lg mb-8">
           <Zap className="h-5 w-5 text-accent" />
-          <span className="gradient-text">AppTemplate</span>
+          <span className="gradient-text">{CONTENT.brand.name}</span>
         </Link>
 
         {/* Card */}

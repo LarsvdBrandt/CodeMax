@@ -4,8 +4,8 @@
 import { Link } from 'react-router-dom'
 import { Github, Twitter, Linkedin, Zap } from 'lucide-react'
 import { useScrollTo } from '@/hooks/useScrollTo'
+import { CONTENT } from '@/config/content'
 
-// ── Footer links configuration ────────────────────────────────────────────────
 const FOOTER_LINKS = [
   {
     heading: 'Product',
@@ -18,15 +18,15 @@ const FOOTER_LINKS = [
   {
     heading: 'Company',
     items: [
-      { label: 'Privacy Policy', href: '/privacy' },
-      { label: 'Terms of Service', href: '/terms' },
+      { label: 'Privacy Policy',  href: '/privacy' },
+      { label: 'Terms of Service', href: '/terms'   },
     ],
   },
   {
     heading: 'Auth',
     items: [
-      { label: 'Sign in',    href: '/login'    },
-      { label: 'Register',   href: '/register' },
+      { label: 'Sign in',  href: '/login'    },
+      { label: 'Register', href: '/register' },
     ],
   },
 ]
@@ -51,12 +51,11 @@ export function Footer() {
           <div className="col-span-2 md:col-span-1">
             <Link to="/" className="flex items-center gap-2 font-bold text-lg">
               <Zap className="h-5 w-5 text-accent" />
-              <span className="gradient-text">AppTemplate</span>
+              <span className="gradient-text">{CONTENT.brand.name}</span>
             </Link>
             <p className="mt-3 text-sm text-muted leading-relaxed max-w-xs">
-              A production-ready starter kit. Replace this copy with your tagline.
+              {CONTENT.footer.tagline}
             </p>
-            {/* Social icons */}
             <div className="mt-5 flex gap-3">
               {SOCIAL.map(({ icon: Icon, href, label }) => (
                 <a
@@ -104,8 +103,8 @@ export function Footer() {
 
         {/* ── Bottom: copyright ─────────────────────────────────────────── */}
         <div className="mt-12 pt-6 border-t border-border flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-muted">
-          <p>© {new Date().getFullYear()} AppTemplate. All rights reserved.</p>
-          <p>Built with React + Tailwind CSS</p>
+          <p>© {new Date().getFullYear()} {CONTENT.brand.name}. All rights reserved.</p>
+          <p>{CONTENT.footer.bottomNote}</p>
         </div>
       </div>
     </footer>

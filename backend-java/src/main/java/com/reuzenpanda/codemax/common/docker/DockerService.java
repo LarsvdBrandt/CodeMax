@@ -26,7 +26,7 @@ public class DockerService {
     private static final String IMAGE = "node:20-alpine";
     private static final String NETWORK = "codemax_network";
     private static final String VOLUME_NAME = "codemax_projects";
-    private static final int VITE_INTERNAL_PORT = 5173;
+    public static final int VITE_INTERNAL_PORT = 5173;
 
     public record PreviewResult(String containerId, int port) {}
 
@@ -194,7 +194,7 @@ public class DockerService {
         String confPath = nginxConfDir + "/previews.conf";
         String locationBlock = "\nlocation /preview/" + projectId + "/ {\n" +
             "    set $upstream codemax_preview_" + projectId + ";\n" +
-            "    proxy_pass http://$upstream:3001/;\n" +
+            "    proxy_pass http://$upstream:3000/;\n" +
             "    proxy_set_header Host $host;\n" +
             "    proxy_set_header X-Real-IP $remote_addr;\n" +
             "}\n";

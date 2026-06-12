@@ -1,8 +1,3 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// ContactSection — contact form wired to contactService.send().
-// On success it shows a confirmation message.
-// ─────────────────────────────────────────────────────────────────────────────
-
 import { useState, useRef } from 'react'
 import { motion, useInView } from 'framer-motion'
 import { Send, Mail, MapPin, Clock } from 'lucide-react'
@@ -10,12 +5,7 @@ import { Input } from '@/components/ui/Input'
 import { Button } from '@/components/ui/Button'
 import { contactService } from '@/services/api'
 import type { ContactPayload } from '@/types'
-
-const CONTACT_INFO = [
-  { icon: Mail,   label: 'Email',    value: 'hello@example.com'   },
-  { icon: MapPin, label: 'Location', value: 'Amsterdam, NL'       },
-  { icon: Clock,  label: 'Hours',    value: 'Mon–Fri, 9 am–6 pm' },
-]
+import { CONTENT } from '@/config/content'
 
 const EMPTY: ContactPayload = { name: '', email: '', subject: '', message: '' }
 
@@ -33,6 +23,12 @@ function FadeIn({ children, delay = 0 }: { children: React.ReactNode; delay?: nu
     </motion.div>
   )
 }
+
+const CONTACT_ROWS = [
+  { icon: Mail,   label: 'Email',    value: CONTENT.contact.email    },
+  { icon: MapPin, label: 'Location', value: CONTENT.contact.location },
+  { icon: Clock,  label: 'Hours',    value: CONTENT.contact.hours    },
+]
 
 export function ContactSection() {
   const [form,    setForm]    = useState<ContactPayload>(EMPTY)
@@ -70,7 +66,6 @@ export function ContactSection() {
   function set(field: keyof ContactPayload) {
     return (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
       setForm(f => ({ ...f, [field]: e.target.value }))
-      // Clear per-field error as user types
       if (errors[field]) setErrors(er => ({ ...er, [field]: undefined }))
     }
   }
@@ -79,13 +74,13 @@ export function ContactSection() {
     <section id="contact" className="section mx-auto max-w-6xl">
       <FadeIn>
         <div className="mb-16 text-center">
-          <span className="text-xs font-semibold uppercase tracking-widest text-accent">Contact</span>
+          <span className="text-xs font-semibold uppercase tracking-widest text-accent">
+            {CONTENT.contact.label}
+          </span>
           <h2 className="mt-3 text-4xl font-bold tracking-tight">
-            Get in <span className="gradient-text">touch</span>
+            <span className="gradient-text">{CONTENT.contact.title}</span>
           </h2>
-          <p className="mt-4 text-muted max-w-xl mx-auto">
-            Have a question or want to work together? Fill in the form and we'll get back to you.
-          </p>
+          <p className="mt-4 text-muted max-w-xl mx-auto">{CONTENT.contact.subtitle}</p>
         </div>
       </FadeIn>
 
@@ -94,7 +89,7 @@ export function ContactSection() {
         {/* ── Contact info ────────────────────────────────────────────── */}
         <FadeIn delay={0.1}>
           <div className="space-y-6">
-            {CONTACT_INFO.map(({ icon: Icon, label, value }) => (
+            {CONTACT_ROWS.map(({ icon: Icon, label, value }) => (
               <div key={label} className="flex items-start gap-4">
                 <div className="h-10 w-10 flex-shrink-0 rounded-lg bg-accent/10 flex items-center justify-center text-accent">
                   <Icon className="h-4 w-4" />
@@ -113,7 +108,7 @@ export function ContactSection() {
           {sent ? (
             <div className="rounded-lg border border-success/30 bg-success/10 p-8 text-center">
               <p className="text-lg font-semibold text-foreground">Message sent!</p>
-              <p className="mt-2 text-sm text-muted">Thanks for reaching out. We'll reply within 1 business day.</p>
+              <p className="mt-2 text-sm text-muted">{CONTENT.contact.success}</p>
               <Button variant="ghost" size="sm" className="mt-4" onClick={() => setSent(false)}>
                 Send another
               </Button>
@@ -125,8 +120,6 @@ export function ContactSection() {
                 <Input label="Email"   value={form.email}   onChange={set('email')}   error={errors.email}   placeholder="jane@example.com" type="email" />
               </div>
               <Input label="Subject" value={form.subject} onChange={set('subject')} error={errors.subject} placeholder="How can we help?"  />
-
-              {/* Textarea — mirrors Input styling but uses a <textarea> */}
               <div className="flex flex-col gap-1.5">
                 <label className="text-sm font-medium text-foreground">Message</label>
                 <textarea
@@ -144,9 +137,7 @@ export function ContactSection() {
                 />
                 {errors.message && <p className="text-xs text-error">{errors.message}</p>}
               </div>
-
               {apiErr && <p className="text-sm text-error">{apiErr}</p>}
-
               <Button type="submit" isLoading={loading} rightIcon={<Send className="h-4 w-4" />} className="w-full">
                 Send message
               </Button>

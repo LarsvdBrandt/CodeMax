@@ -12,6 +12,7 @@ import { Divider } from '@/components/ui/Divider'
 import { api }     from '@/config/api'
 import { Button } from '@/components/ui/Button'
 import { useAuth } from '@/hooks/useAuth'
+import { CONTENT } from '@/config/content'
 
 interface FormState {
   name:     string
@@ -66,7 +67,7 @@ export default function Register() {
         {/* Logo */}
         <Link to="/" className="flex items-center justify-center gap-2 font-bold text-lg mb-8">
           <Zap className="h-5 w-5 text-accent" />
-          <span className="gradient-text">AppTemplate</span>
+          <span className="gradient-text">{CONTENT.brand.name}</span>
         </Link>
 
         {/* Card */}

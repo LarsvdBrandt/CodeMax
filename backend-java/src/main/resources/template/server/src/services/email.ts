@@ -11,7 +11,8 @@
 // sendWelcomeEmail.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { env } from '../config/env'
+import { env }     from '../config/env'
+import { CONTENT } from '../config/content'
 
 interface SendOptions {
   to:      string
@@ -100,10 +101,10 @@ function layout(content: string): string {
         <tr><td align="center">
           <table width="600" cellpadding="0" cellspacing="0" style="background:#121214;border:1px solid #27272a;border-radius:8px;padding:40px">
             <tr><td>
-              <p style="margin:0 0 32px;font-size:20px;font-weight:700;color:#ffffff">⚡ AppTemplate</p>
+              <p style="margin:0 0 32px;font-size:20px;font-weight:700;color:#ffffff">⚡ ${CONTENT.brand.name}</p>
               ${content}
               <p style="margin:32px 0 0;font-size:12px;color:#71717a">
-                You received this email because you signed up for AppTemplate.<br>
+                You received this email because you signed up for ${CONTENT.brand.name}.<br>
                 If you did not create an account you can safely ignore this email.
               </p>
             </td></tr>
@@ -121,14 +122,14 @@ export async function sendWelcomeEmail(user: { name: string; email: string }): P
   const driver = await getDriver()
   await driver.send({
     to:      user.email,
-    subject: 'Welcome to AppTemplate!',
+    subject: `Welcome to ${CONTENT.brand.name}!`,
     html:    layout(`
       <h1 style="margin:0 0 16px;font-size:24px;font-weight:700">Welcome, ${user.name}!</h1>
       <p style="margin:0 0 16px;color:#a1a1aa;line-height:1.6">
-        Your account has been created. You can now sign in and start using AppTemplate.
+        Your account has been created. You can now sign in and start using ${CONTENT.brand.name}.
       </p>
       <a href="${env.APP_URL}" style="display:inline-block;background:#6366f1;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:600">
-        Go to AppTemplate
+        Go to ${CONTENT.brand.name}
       </a>
     `),
   })
