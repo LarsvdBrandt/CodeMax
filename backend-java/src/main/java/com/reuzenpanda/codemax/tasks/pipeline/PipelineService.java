@@ -613,7 +613,9 @@ public class PipelineService {
     private static final List<String> ERROR_INDICATORS = List.of(
         "Module not found", "SyntaxError", "Cannot find module",
         "error TS", "Type error", "Failed to compile", "Build error",
-        "ERR_MODULE_NOT_FOUND"
+        "ERR_MODULE_NOT_FOUND", "ENOENT", "ReferenceError", "TypeError:",
+        "UnhandledPromiseRejection", "Cannot read properties of",
+        "is not a function", "is not defined", "FATAL ERROR"
     );
 
     private boolean hasErrors(String logContent) {

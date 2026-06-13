@@ -1,5 +1,6 @@
 package com.reuzenpanda.codemax.versions.services;
 
+import com.reuzenpanda.codemax.auth.repositories.IUserRepository;
 import com.reuzenpanda.codemax.common.amqp.QueuePublisher;
 import com.reuzenpanda.codemax.common.config.CodeMaxProperties;
 import com.reuzenpanda.codemax.common.docker.DockerService;
@@ -43,6 +44,7 @@ public class VersionService implements IVersionService {
     private final IProjectFileRepository fileRepo;
     private final IProjectMemberRepository memberRepo;
     private final ITaskRepository taskRepo;
+    private final IUserRepository userRepo;
     private final QueuePublisher queue;
     private final DockerService docker;
     private final CodeMaxProperties props;
@@ -225,7 +227,9 @@ public class VersionService implements IVersionService {
     @Override
     public List<ProjectPullRequestDto> listPullRequests(UUID requestingUserId, UUID projectId) {
         requireAccess(requestingUserId, projectId);
-        return mapper.toPrDtos(prRepo.findByProjectIdOrderByCreatedAtDesc(projectId));
+        return prRepo.findByProjectIdOrderByCreatedAtDesc(projectId).stream()
+            .map(this::toPrDtoWithEmail)
+            .toList();
     }
 
     @Override
@@ -242,7 +246,7 @@ public class VersionService implements IVersionService {
         pr.setDescription(description != null ? description : "");
         pr.setStatus(PullRequestStatus.open);
         pr.setCreatedBy(requestingUserId);
-        return mapper.toPrDto(prRepo.save(pr));
+        return toPrDtoWithEmail(prRepo.save(pr));
     }
 
     @Override
@@ -317,7 +321,7 @@ public class VersionService implements IVersionService {
         pr.setStatus(PullRequestStatus.approved);
         pr.setReviewedBy(reviewerUserId);
         pr.setReviewedAt(OffsetDateTime.now());
-        return mapper.toPrDto(prRepo.save(pr));
+        return toPrDtoWithEmail(prRepo.save(pr));
     }
 
     @Override
@@ -348,7 +352,7 @@ public class VersionService implements IVersionService {
         taskDto.setStatus(task.getStatus().name());
         taskDto.setCreatedAt(task.getCreatedAt());
 
-        return new RejectPrResult(mapper.toPrDto(pr), taskDto);
+        return new RejectPrResult(toPrDtoWithEmail(pr), taskDto);
     }
 
     @Override
@@ -412,6 +416,13 @@ public class VersionService implements IVersionService {
     }
 
     // ── Private helpers ────────────────────────────────────────────────────────
+
+    private ProjectPullRequestDto toPrDtoWithEmail(ProjectPullRequest pr) {
+        ProjectPullRequestDto dto = mapper.toPrDto(pr);
+        userRepo.findById(pr.getCreatedBy())
+            .ifPresent(u -> dto.setCreatedByEmail(u.getEmail()));
+        return dto;
+    }
 
     private void requireAccess(UUID userId, UUID projectId) {
         var project = projectRepo.findById(projectId).orElseThrow(() -> new NotFoundException("Project not found"));

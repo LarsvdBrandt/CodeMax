@@ -1,5 +1,6 @@
 package com.reuzenpanda.codemax.teams.services;
 
+import com.reuzenpanda.codemax.auth.repositories.IUserRepository;
 import com.reuzenpanda.codemax.common.exceptions.ConflictException;
 import com.reuzenpanda.codemax.common.exceptions.ForbiddenException;
 import com.reuzenpanda.codemax.common.exceptions.NotFoundException;
@@ -24,6 +25,7 @@ public class ProjectMemberService implements IProjectMemberService {
 
     private final IProjectMemberRepository memberRepo;
     private final IProjectRepository projectRepo;
+    private final IUserRepository userRepo;
     private final ProjectMemberMapper mapper;
 
     @Override
@@ -42,7 +44,7 @@ public class ProjectMemberService implements IProjectMemberService {
         member.setInvitedBy(requestingUserId);
         member.setInviteToken(UUID.randomUUID().toString().replace("-", "") + UUID.randomUUID().toString().replace("-", ""));
 
-        return mapper.toDto(memberRepo.save(member));
+        return toMemberDtoWithInviterEmail(memberRepo.save(member));
     }
 
     @Override
@@ -54,7 +56,7 @@ public class ProjectMemberService implements IProjectMemberService {
         member.setStatus(MemberStatus.accepted);
         member.setInviteToken(null);
 
-        return mapper.toDto(memberRepo.save(member));
+        return toMemberDtoWithInviterEmail(memberRepo.save(member));
     }
 
     @Override
@@ -62,7 +64,9 @@ public class ProjectMemberService implements IProjectMemberService {
         if (!canAccessProject(requestingUserId, projectId)) {
             throw new ForbiddenException("Access denied");
         }
-        return mapper.toDtos(memberRepo.findByProjectId(projectId));
+        return memberRepo.findByProjectId(projectId).stream()
+            .map(this::toMemberDtoWithInviterEmail)
+            .toList();
     }
 
     @Override
@@ -81,7 +85,7 @@ public class ProjectMemberService implements IProjectMemberService {
             .orElseThrow(() -> new NotFoundException("Member not found"));
         if (!member.getProjectId().equals(projectId)) throw new ForbiddenException("Access denied");
         member.setRole(newRole);
-        return mapper.toDto(memberRepo.save(member));
+        return toMemberDtoWithInviterEmail(memberRepo.save(member));
     }
 
     @Override
@@ -98,6 +102,15 @@ public class ProjectMemberService implements IProjectMemberService {
     @Override
     public boolean canAccessProject(UUID userId, UUID projectId) {
         return getMemberRole(userId, projectId) != null;
+    }
+
+    private ProjectMemberDto toMemberDtoWithInviterEmail(ProjectMember member) {
+        ProjectMemberDto dto = mapper.toDto(member);
+        if (member.getInvitedBy() != null) {
+            userRepo.findById(member.getInvitedBy())
+                .ifPresent(u -> dto.setInvitedByEmail(u.getEmail()));
+        }
+        return dto;
     }
 
     private void requireOwner(UUID userId, UUID projectId) {

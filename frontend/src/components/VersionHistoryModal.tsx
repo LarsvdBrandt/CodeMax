@@ -28,6 +28,7 @@ function fmtDate(d: string) {
 // ── Types ─────────────────────────────────────────────────────────────────────
 interface Props {
   projectId: string;
+  projectName: string;
   myRole: string;
   activeBranchId: string | null;
   onCheckout: (branch: ProjectBranch) => void;
@@ -122,7 +123,7 @@ function BranchNode({
 
 // ── Main modal ────────────────────────────────────────────────────────────────
 export default function VersionHistoryModal({
-  projectId, myRole, activeBranchId, onCheckout, onClose, onTaskCreated,
+  projectId, projectName, myRole, activeBranchId, onCheckout, onClose, onTaskCreated,
 }: Props) {
   const [branches,       setBranches]       = useState<ProjectBranch[]>([]);
   const [selectedBranch, setSelectedBranch] = useState<ProjectBranch | null>(null);
@@ -224,7 +225,20 @@ export default function VersionHistoryModal({
   }
 
   async function handleApprove(prId: string) {
-    await approvePullRequest(projectId, prId).catch(console.error);
+    const pr = await approvePullRequest(projectId, prId).catch(console.error);
+    if (pr?.created_by_email) {
+      fetch("/api/notify/pr", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: pr.created_by_email,
+          prTitle: pr.title,
+          projectName,
+          status: "approved",
+        }),
+      }).catch(() => {});
+    }
     listPullRequests(projectId).then(setPrs);
     loadBranches();
   }
@@ -232,6 +246,19 @@ export default function VersionHistoryModal({
   async function handleReject(prId: string) {
     const result = await rejectPullRequest(projectId, prId).catch(() => null);
     if (result?.task?.id) onTaskCreated?.(result.task.id);
+    if (result?.pr?.created_by_email) {
+      fetch("/api/notify/pr", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: result.pr.created_by_email,
+          prTitle: result.pr.title,
+          projectName,
+          status: "rejected",
+        }),
+      }).catch(() => {});
+    }
     listPullRequests(projectId).then(setPrs);
   }
 

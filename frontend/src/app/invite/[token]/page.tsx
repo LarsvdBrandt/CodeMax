@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter, useParams, useSearchParams } from "next/navigation";
-import { acceptInvite } from "@/lib/api";
+import { acceptInvite, getProject } from "@/lib/api";
 import { authClient } from "@/lib/auth-client";
 import Link from "next/link";
 
@@ -33,8 +33,23 @@ export default function InvitePage() {
       // Logged in — accept immediately
       setStatus("accepting");
       acceptInvite(token)
-        .then((member) => {
+        .then(async (member) => {
           setStatus("success");
+          // Notify the inviter that someone joined
+          if (member.invited_by_email) {
+            const project = await getProject(member.project_id).catch(() => null);
+            fetch("/api/notify/member-joined", {
+              method: "POST",
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                to: member.invited_by_email,
+                memberEmail: member.invite_email,
+                projectName: project?.name ?? member.project_id,
+                role: member.role,
+              }),
+            }).catch(() => {});
+          }
           setTimeout(() => router.replace(`/project/${member.project_id}`), 1500);
         })
         .catch((err) => {

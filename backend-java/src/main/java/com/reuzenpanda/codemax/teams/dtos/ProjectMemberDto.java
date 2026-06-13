@@ -17,5 +17,6 @@ public class ProjectMemberDto {
     private String role;
     private String status;
     private UUID invitedBy;
+    private String invitedByEmail;
     private OffsetDateTime createdAt;
 }

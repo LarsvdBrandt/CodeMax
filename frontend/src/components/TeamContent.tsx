@@ -26,6 +26,7 @@ export default function TeamContent({ projectId, projectName, myRole }: Props) {
   const [inviting, setInviting] = useState(false);
   const [error, setError] = useState("");
   const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [emailSent, setEmailSent] = useState(false);
   const [copied, setCopied] = useState(false);
 
   const canManage = myRole === "owner" || myRole === "admin";
@@ -50,13 +51,14 @@ export default function TeamContent({ projectId, projectName, myRole }: Props) {
       const emailParam = encodeURIComponent(member.invite_email ?? "");
       const link = `${window.location.origin}/invite/${token}?email=${emailParam}`;
       setInviteLink(link);
-      // Also send invite email (fire-and-forget, link is shown as fallback)
-      await fetch("/api/send-invite", {
+      setEmailSent(false);
+      const emailRes = await fetch("/api/send-invite", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token, email: member.invite_email, projectName, role }),
-      }).catch(() => {});
+      }).catch(() => null);
+      setEmailSent(emailRes?.ok === true);
       setEmail("");
       load();
     } catch (err: unknown) {
@@ -132,7 +134,11 @@ export default function TeamContent({ projectId, projectName, myRole }: Props) {
               {copied ? "Copied!" : "Copy"}
             </button>
           </div>
-          <p className="text-[11px] text-[#444]">Share this link with the invitee. An email was also sent if SMTP is configured.</p>
+          <p className="text-[11px] text-[#444]">
+            {emailSent
+              ? "Invite email sent successfully."
+              : "Email could not be sent — share this link directly. Set RESEND_FROM_EMAIL to a verified domain to enable email delivery."}
+          </p>
         </div>
       )}
 

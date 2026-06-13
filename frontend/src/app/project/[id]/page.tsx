@@ -1514,6 +1514,7 @@ export default function ProjectPage() {
       {showVersions && project && (
         <VersionHistoryModal
           projectId={id}
+          projectName={project.name}
           myRole={myRole}
           activeBranchId={activeBranch?.id ?? null}
           onCheckout={branch => {

@@ -191,6 +191,95 @@ export function verifyEmailEmail(verifyUrl: string): string {
   `);
 }
 
+export function prApprovedEmail(prTitle: string, projectName: string, reviewerName: string): string {
+  return shell(`
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;">
+      Merge request approved
+    </h1>
+    <p style="margin:0 0 24px;font-size:14px;color:#888888;line-height:1.6;">
+      <strong style="color:#ffffff;">${reviewerName}</strong> approved your merge request in
+      <strong style="color:#ffffff;">${projectName}</strong>.
+    </p>
+
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:28px;">
+      <tr>
+        <td style="background-color:#0d0d0d;border:1px solid #1e3a1e;border-radius:10px;padding:16px 18px;">
+          <p style="margin:0 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#2d6a2d;font-weight:600;">Approved</p>
+          <p style="margin:0;font-size:14px;color:#ffffff;font-weight:600;">${prTitle}</p>
+        </td>
+      </tr>
+    </table>
+
+    <p style="margin:0 0 4px;font-size:13px;color:#555555;line-height:1.6;">
+      The changes from your branch have been merged into <strong style="color:#888">main</strong>. The preview has been updated.
+    </p>
+  `);
+}
+
+export function prRejectedEmail(prTitle: string, projectName: string): string {
+  return shell(`
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;">
+      Merge request needs changes
+    </h1>
+    <p style="margin:0 0 24px;font-size:14px;color:#888888;line-height:1.6;">
+      Your merge request in <strong style="color:#ffffff;">${projectName}</strong> was not approved yet.
+      A new task has been created on your branch so the AI agent can rework it.
+    </p>
+
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:28px;">
+      <tr>
+        <td style="background-color:#0d0d0d;border:1px solid #3a1e1e;border-radius:10px;padding:16px 18px;">
+          <p style="margin:0 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#8b2020;font-weight:600;">Changes requested</p>
+          <p style="margin:0;font-size:14px;color:#ffffff;font-weight:600;">${prTitle}</p>
+        </td>
+      </tr>
+    </table>
+
+    <p style="margin:0;font-size:13px;color:#555555;line-height:1.6;">
+      Open the project to review the feedback and iterate on your branch.
+    </p>
+  `);
+}
+
+export function memberJoinedEmail(memberEmail: string, projectName: string, role: string): string {
+  const roleLabel = role === "admin" ? "Admin" : role === "maintainer" ? "Maintainer" : "Observer";
+  return shell(`
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;">
+      Someone joined your project
+    </h1>
+    <p style="margin:0 0 24px;font-size:14px;color:#888888;line-height:1.6;">
+      A team member has accepted their invitation to <strong style="color:#ffffff;">${projectName}</strong>.
+    </p>
+
+    ${divider}
+
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom:24px;">
+      <tr>
+        <td style="padding:6px 0;">
+          <p style="margin:0 0 3px;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#333333;font-weight:600;">Member</p>
+          <p style="margin:0;font-size:14px;color:#ffffff;">${memberEmail}</p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:6px 0;">
+          <p style="margin:0 0 3px;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#333333;font-weight:600;">Role</p>
+          <p style="margin:0;font-size:14px;color:#ffffff;">${roleLabel}</p>
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:6px 0;">
+          <p style="margin:0 0 3px;font-size:11px;text-transform:uppercase;letter-spacing:0.08em;color:#333333;font-weight:600;">Project</p>
+          <p style="margin:0;font-size:14px;color:#ffffff;">${projectName}</p>
+        </td>
+      </tr>
+    </table>
+
+    <p style="margin:0;font-size:12px;color:#333333;line-height:1.6;">
+      You can manage team roles from inside the project.
+    </p>
+  `);
+}
+
 export function projectInviteEmail(
   inviterName: string,
   projectName: string,

@@ -17,6 +17,7 @@ public class ProjectPullRequestDto {
     private String description;
     private String status;
     private UUID createdBy;
+    private String createdByEmail;
     private UUID reviewedBy;
     private OffsetDateTime reviewedAt;
     private OffsetDateTime createdAt;

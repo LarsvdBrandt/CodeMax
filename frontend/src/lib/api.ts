@@ -309,6 +309,7 @@ export interface ProjectMember {
   role: MemberRole;
   status: "pending" | "accepted";
   invited_by: string;
+  invited_by_email: string | null;
   created_at: string;
 }
 
@@ -382,6 +383,7 @@ export interface ProjectPullRequest {
   description: string;
   status: "open" | "approved" | "rejected";
   created_by: string;
+  created_by_email: string | null;
   reviewed_by: string | null;
   reviewed_at: string | null;
   created_at: string;
