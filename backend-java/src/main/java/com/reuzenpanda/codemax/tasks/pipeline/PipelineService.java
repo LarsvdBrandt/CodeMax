@@ -13,6 +13,7 @@ import com.reuzenpanda.codemax.tasks.entities.AgentLogEntry;
 import com.reuzenpanda.codemax.tasks.entities.Task;
 import com.reuzenpanda.codemax.tasks.entities.TaskStatus;
 import com.reuzenpanda.codemax.tasks.repositories.ITaskRepository;
+import com.reuzenpanda.codemax.versions.services.IVersionService;
 import com.reuzenpanda.codemax.tasks.pipeline.engine.Patch;
 import com.reuzenpanda.codemax.tasks.pipeline.engine.PatchEngine;
 import com.reuzenpanda.codemax.tasks.pipeline.engine.TemplateKnowledgeBuilder;
@@ -58,6 +59,7 @@ public class PipelineService {
     private final CodeMaxProperties props;
     private final ObjectMapper objectMapper;
     private final ResourcePatternResolver resourceLoader;
+    private final IVersionService versionService;
 
     // Pack-based pipeline components
     private final PackRegistry packRegistry;
@@ -257,6 +259,13 @@ public class PipelineService {
             task.setStatus(TaskStatus.done);
             taskRepo.save(task);
             pipeLog(task, "done", "done", "Build complete — preview on port " + preview.port());
+
+            // Auto-commit version snapshot after successful build
+            try {
+                versionService.autoCommit(projectId, taskId, project.getUserId(), task.getPrompt());
+            } catch (Exception vEx) {
+                log.warn("Version auto-commit failed for task {}: {}", taskId, vEx.getMessage());
+            }
 
         } catch (Exception e) {
             log.error("Pipeline failed for task {}: {}", taskId, e.getMessage(), e);

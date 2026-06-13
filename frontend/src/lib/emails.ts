@@ -190,3 +190,31 @@ export function verifyEmailEmail(verifyUrl: string): string {
     ${fallbackUrl(verifyUrl)}
   `);
 }
+
+export function projectInviteEmail(
+  inviterName: string,
+  projectName: string,
+  inviteUrl: string,
+  role: string
+): string {
+  const roleLabel = role === "admin" ? "Admin" : role === "maintainer" ? "Maintainer" : "Observer";
+  return shell(`
+    <h1 style="margin:0 0 8px;font-size:22px;font-weight:700;color:#ffffff;letter-spacing:-0.5px;">
+      You're invited to a project
+    </h1>
+    <p style="margin:0 0 16px;font-size:14px;color:#888888;line-height:1.6;">
+      <strong style="color:#ffffff;">${inviterName}</strong> has invited you to collaborate on
+      <strong style="color:#ffffff;">${projectName}</strong> as a <strong style="color:#ffffff;">${roleLabel}</strong>.
+    </p>
+
+    ${ctaButton("Accept invitation →", inviteUrl)}
+
+    ${divider}
+
+    ${fallbackUrl(inviteUrl)}
+
+    <p style="margin:20px 0 0;font-size:12px;color:#333333;line-height:1.6;">
+      If you don't have a ${BRAND} account yet, you'll be asked to create one first.
+    </p>
+  `);
+}

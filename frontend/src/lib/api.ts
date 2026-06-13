@@ -295,3 +295,147 @@ export async function generatePlan(description: string): Promise<{ plan: string 
     body: JSON.stringify({ description }),
   });
 }
+
+// ─── Team Members ─────────────────────────────────────────────────────────────
+
+export type MemberRole = "observer" | "maintainer" | "admin" | "owner";
+
+export interface ProjectMember {
+  id: string;
+  project_id: string;
+  user_id: string | null;
+  invite_email: string;
+  invite_token: string | null;
+  role: MemberRole;
+  status: "pending" | "accepted";
+  invited_by: string;
+  created_at: string;
+}
+
+export async function listMembers(projectId: string): Promise<ProjectMember[]> {
+  return request(`/projects/${projectId}/members`);
+}
+
+export async function inviteMember(projectId: string, email: string, role: MemberRole): Promise<ProjectMember> {
+  return request(`/projects/${projectId}/members`, {
+    method: "POST",
+    body: JSON.stringify({ email, role }),
+  });
+}
+
+export async function removeMember(projectId: string, memberId: string): Promise<void> {
+  return request(`/projects/${projectId}/members/${memberId}`, { method: "DELETE" });
+}
+
+export async function updateMemberRole(projectId: string, memberId: string, role: MemberRole): Promise<ProjectMember> {
+  return request(`/projects/${projectId}/members/${memberId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ role }),
+  });
+}
+
+export async function getMyRole(projectId: string): Promise<{ role: string }> {
+  return request(`/projects/${projectId}/my-role`);
+}
+
+export async function acceptInvite(token: string): Promise<ProjectMember> {
+  return request(`/invites/${token}/accept`, { method: "POST" });
+}
+
+// ─── Version Control ──────────────────────────────────────────────────────────
+
+export interface ProjectBranch {
+  id: string;
+  project_id: string;
+  name: string;
+  parent_branch_id: string | null;
+  container_id: string | null;
+  preview_port: number | null;
+  status: "active" | "merged" | "rejected";
+  created_by: string;
+  created_at: string;
+}
+
+export interface ProjectCommit {
+  id: string;
+  project_id: string;
+  branch_id: string;
+  task_id: string | null;
+  message: string;
+  created_by: string;
+  created_at: string;
+}
+
+export interface ProjectCommitFile {
+  id: string;
+  commit_id: string;
+  file_path: string;
+  content: string;
+}
+
+export interface ProjectPullRequest {
+  id: string;
+  project_id: string;
+  source_branch_id: string;
+  target_branch_id: string;
+  title: string;
+  description: string;
+  status: "open" | "approved" | "rejected";
+  created_by: string;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function listBranches(projectId: string): Promise<ProjectBranch[]> {
+  return request(`/projects/${projectId}/versions/branches`);
+}
+
+export async function createBranch(projectId: string, name: string, parentBranchId: string): Promise<ProjectBranch> {
+  return request(`/projects/${projectId}/versions/branches`, {
+    method: "POST",
+    body: JSON.stringify({ name, parent_branch_id: parentBranchId }),
+  });
+}
+
+export async function listCommits(projectId: string, branchId: string): Promise<ProjectCommit[]> {
+  return request(`/projects/${projectId}/versions/branches/${branchId}/commits`);
+}
+
+export async function getCommitFiles(projectId: string, commitId: string): Promise<ProjectCommitFile[]> {
+  return request(`/projects/${projectId}/versions/commits/${commitId}/files`);
+}
+
+export async function startBranchPreview(projectId: string, branchId: string): Promise<ProjectBranch> {
+  return request(`/projects/${projectId}/versions/branches/${branchId}/preview/start`, { method: "POST" });
+}
+
+export async function stopBranchPreview(projectId: string, branchId: string): Promise<ProjectBranch> {
+  return request(`/projects/${projectId}/versions/branches/${branchId}/preview/stop`, { method: "POST" });
+}
+
+export async function listPullRequests(projectId: string): Promise<ProjectPullRequest[]> {
+  return request(`/projects/${projectId}/versions/pull-requests`);
+}
+
+export async function createPullRequest(
+  projectId: string,
+  sourceBranchId: string,
+  targetBranchId: string,
+  title: string,
+  description: string
+): Promise<ProjectPullRequest> {
+  return request(`/projects/${projectId}/versions/pull-requests`, {
+    method: "POST",
+    body: JSON.stringify({ source_branch_id: sourceBranchId, target_branch_id: targetBranchId, title, description }),
+  });
+}
+
+export async function approvePullRequest(projectId: string, prId: string): Promise<ProjectPullRequest> {
+  return request(`/projects/${projectId}/versions/pull-requests/${prId}/approve`, { method: "POST" });
+}
+
+export async function rejectPullRequest(projectId: string, prId: string): Promise<{ pr: ProjectPullRequest; task: TaskRecord }> {
+  return request(`/projects/${projectId}/versions/pull-requests/${prId}/reject`, { method: "POST" });
+}

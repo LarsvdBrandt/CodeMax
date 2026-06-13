@@ -31,6 +31,13 @@ export default function RegisterPage() {
         const { token } = await res.json();
         localStorage.setItem("token", token);
       }
+      // Auto-accept pending project invite if coming from an invite link
+      const pendingInvite = sessionStorage.getItem("pendingInviteToken");
+      if (pendingInvite) {
+        sessionStorage.removeItem("pendingInviteToken");
+        router.push(`/invite/${pendingInvite}`);
+        return;
+      }
       router.push("/dashboard");
     } catch {
       setError("Registration failed");

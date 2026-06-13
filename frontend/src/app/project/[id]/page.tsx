@@ -5,12 +5,15 @@ import Link from "next/link";
 import {
   getProject, getProjectStatus, listFiles, listTasks, sendPrompt, retryProject,
   stopPreview, startPreview, getPreviewLogs, clarifyPrompt, provideApiKey,
-  detectKeys, createApiKey, renameProject, ApiError,
+  detectKeys, createApiKey, renameProject, getMyRole, ApiError,
   type Project, type ProjectFile, type ProjectStatus, type TaskRecord, type MissingKey,
 } from "@/lib/api";
 import FileExplorer from "@/components/FileExplorer";
 import CodeEditor from "@/components/CodeEditor";
 import ProjectsSidebar from "@/components/ProjectsSidebar";
+import TeamModal from "@/components/TeamModal";
+import VersionHistoryModal from "@/components/VersionHistoryModal";
+import ProjectSettingsModal from "@/components/ProjectSettingsModal";
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 const Icon = ({ d, size = 4 }: { d: string; size?: number }) => (
@@ -781,6 +784,11 @@ export default function ProjectPage() {
     setPrompt(p => p ? `${p} ${text}` : text)
   );
 
+  const [myRole,       setMyRole]       = useState<string>("owner");
+  const [showTeam,     setShowTeam]     = useState(false);
+  const [showVersions, setShowVersions] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+
   // Clarification state
   interface Clarification {
     basePrompt: string;       // original user prompt
@@ -813,6 +821,7 @@ export default function ProjectPage() {
       try {
         const [p, s, t, f] = await Promise.all([getProject(id), getProjectStatus(id), listTasks(id), listFiles(id)]);
         setProject(p); setStatusData(s); setTasks(t); setFiles(f);
+        try { const { role } = await getMyRole(id); setMyRole(role); } catch { /* default: owner */ }
       } catch (e) { if (e instanceof ApiError && e.status === 401) router.replace("/login"); }
     })();
   }, [id, router]);
@@ -1145,7 +1154,7 @@ export default function ProjectPage() {
         </div>
 
         {/* Input */}
-        <div className="p-3">
+        {myRole !== "observer" && <div className="p-3">
 
           {/* Suggestion buttons — shown during clarification */}
           {clarification && (
@@ -1200,7 +1209,7 @@ export default function ProjectPage() {
               </button>
             )}
           </form>
-        </div>
+        </div>}
       </div>
       )}
 
@@ -1236,9 +1245,20 @@ export default function ProjectPage() {
             onLabelSave={(route, label) => setPageLabels(pl => ({ ...pl, [route]: label }))}
           />
 
-          <TB title="Share (coming soon)">
+          <TB onClick={() => setShowTeam(true)} title="Team Members">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+          </TB>
+          <TB onClick={() => setShowVersions(true)} title="Version History">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </TB>
+          <TB onClick={() => setShowSettings(true)} title="Project Settings">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
           </TB>
           {previewUrl && (
@@ -1247,12 +1267,14 @@ export default function ProjectPage() {
               <ExternalIcon />
             </a>
           )}
-          <button
-            onClick={() => previewUrl && window.open(previewUrl, "_blank")}
-            disabled={!previewUrl}
-            className="bg-white hover:bg-gray-200 disabled:opacity-30 text-black text-xs font-semibold px-4 py-1.5 rounded-[10px] transition-colors ml-1">
-            Publish
-          </button>
+          {myRole !== "observer" && (
+            <button
+              onClick={() => previewUrl && window.open(previewUrl, "_blank")}
+              disabled={!previewUrl}
+              className="bg-white hover:bg-gray-200 disabled:opacity-30 text-black text-xs font-semibold px-4 py-1.5 rounded-[10px] transition-colors ml-1">
+              Publish
+            </button>
+          )}
         </div>
 
         {/* Main content */}
@@ -1382,6 +1404,32 @@ export default function ProjectPage() {
         @keyframes micPulse      { 0%{transform:scale(1);opacity:0.6} 100%{transform:scale(2.2);opacity:0} }
         @keyframes typingBounce  { 0%,100%{transform:translateY(0);opacity:0.3} 50%{transform:translateY(-4px);opacity:1} }
       `}</style>
+
+      {showTeam && project && (
+        <TeamModal
+          projectId={id}
+          projectName={project.name}
+          myRole={myRole}
+          onClose={() => setShowTeam(false)}
+        />
+      )}
+
+      {showVersions && project && (
+        <VersionHistoryModal
+          projectId={id}
+          myRole={myRole}
+          onClose={() => setShowVersions(false)}
+        />
+      )}
+
+      {showSettings && project && (
+        <ProjectSettingsModal
+          project={project}
+          myRole={myRole}
+          onClose={() => setShowSettings(false)}
+          onProjectUpdated={p => setProject(p)}
+        />
+      )}
     </div>
   );
 }

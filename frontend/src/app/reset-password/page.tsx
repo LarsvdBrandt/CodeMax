@@ -7,6 +7,7 @@ function ResetPasswordForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const token = searchParams.get("token");
+  const errorParam = searchParams.get("error");
 
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -15,8 +16,12 @@ function ResetPasswordForm() {
   const [done, setDone] = useState(false);
 
   useEffect(() => {
-    if (!token) setError("Invalid or missing reset token.");
-  }, [token]);
+    if (errorParam) {
+      setError("This reset link is invalid or has expired. Please request a new one.");
+    } else if (!token) {
+      setError("Invalid or missing reset token.");
+    }
+  }, [token, errorParam]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -33,13 +38,18 @@ function ResetPasswordForm() {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        setError(data.message ?? "Failed to reset password");
+        const msg = data.message ?? data.code ?? "Failed to reset password";
+        if (msg === "INVALID_TOKEN" || msg.toLowerCase().includes("invalid")) {
+          setError("This reset link has already been used or expired. Please request a new one.");
+        } else {
+          setError(msg);
+        }
         return;
       }
       setDone(true);
       setTimeout(() => router.push("/login"), 2000);
     } catch {
-      setError("Something went wrong");
+      setError("Something went wrong. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -49,6 +59,21 @@ function ResetPasswordForm() {
     return (
       <div className="text-center space-y-2">
         <p className="text-green-400">Password updated! Redirecting to sign in...</p>
+      </div>
+    );
+  }
+
+  // Show a clean error state if the link is invalid (no point showing the form)
+  if (errorParam) {
+    return (
+      <div className="text-center space-y-4">
+        <p className="text-red-400 text-sm">{error}</p>
+        <Link
+          href="/forgot-password"
+          className="inline-block bg-white text-black text-sm font-medium px-4 py-2 rounded-[10px] hover:bg-gray-100 transition-colors"
+        >
+          Request new reset link
+        </Link>
       </div>
     );
   }
@@ -63,6 +88,7 @@ function ResetPasswordForm() {
           onChange={(e) => setPassword(e.target.value)}
           required
           minLength={8}
+          autoFocus
           className="w-full bg-[#111] border border-[#2a2a2a] rounded-[10px] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-white/30"
         />
       </div>

@@ -13,11 +13,13 @@ export default function ForgotPasswordPage() {
     setError("");
     setLoading(true);
     try {
+      // Use a full absolute URL so Better Auth's callbackURL origin check passes
+      const redirectTo = `${window.location.origin}/reset-password`;
       const res = await fetch("/auth/request-password-reset", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, redirectTo: "/reset-password" }),
+        body: JSON.stringify({ email, redirectTo }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));

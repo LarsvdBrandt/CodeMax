@@ -43,6 +43,33 @@ public class DockerService {
         return "codemax-" + projectId;
     }
 
+    /** Returns the compose project name for a branch preview. */
+    public String branchContainerName(UUID branchId) {
+        return "codemax-branch-" + branchId;
+    }
+
+    /**
+     * Provisions a preview container for a branch from a given directory.
+     * The directory must already contain all the project files.
+     */
+    public PreviewResult provisionBranchPreview(UUID branchId, Path branchDir,
+                                                String jwtSecret, String appName, String dbName) {
+        String projectName = branchContainerName(branchId);
+        int nginxPort = findFreePort();
+
+        runComposeSilent(branchDir, projectName, "down", "--volumes", "--remove-orphans");
+        writeComposeEnv(branchDir, nginxPort, jwtSecret, appName, dbName, projectName);
+        runCompose(branchDir, projectName, "up", "-d", "--build");
+
+        log.info("DockerService: branch {} running on nginx port {}", branchId, nginxPort);
+        return new PreviewResult(projectName, nginxPort);
+    }
+
+    public void removeBranchContainer(UUID branchId, Path branchDir) {
+        String projectName = branchContainerName(branchId);
+        runComposeSilent(branchDir, projectName, "down", "--volumes", "--remove-orphans");
+    }
+
     // ── Provision ─────────────────────────────────────────────────────────────
 
     /**
