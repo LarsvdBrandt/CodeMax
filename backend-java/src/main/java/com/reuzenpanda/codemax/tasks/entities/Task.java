@@ -28,6 +28,9 @@ public class Task {
     @Column(nullable = false)
     private String prompt;
 
+    @Column(name = "branch_id")
+    private UUID branchId;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 50)
     private TaskStatus status = TaskStatus.queued;

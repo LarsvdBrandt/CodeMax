@@ -5,8 +5,9 @@ import Link from "next/link";
 import {
   getProject, getProjectStatus, listFiles, listTasks, sendPrompt, retryProject,
   stopPreview, startPreview, getPreviewLogs, clarifyPrompt, provideApiKey,
-  detectKeys, createApiKey, renameProject, getMyRole, ApiError,
+  detectKeys, createApiKey, renameProject, getMyRole, listBranches, ApiError,
   type Project, type ProjectFile, type ProjectStatus, type TaskRecord, type MissingKey,
+  type ProjectBranch,
 } from "@/lib/api";
 import FileExplorer from "@/components/FileExplorer";
 import CodeEditor from "@/components/CodeEditor";
@@ -788,6 +789,7 @@ export default function ProjectPage() {
   const [showTeam,     setShowTeam]     = useState(false);
   const [showVersions, setShowVersions] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [activeBranch, setActiveBranch] = useState<ProjectBranch | null>(null);
 
   // Clarification state
   interface Clarification {
@@ -822,6 +824,12 @@ export default function ProjectPage() {
         const [p, s, t, f] = await Promise.all([getProject(id), getProjectStatus(id), listTasks(id), listFiles(id)]);
         setProject(p); setStatusData(s); setTasks(t); setFiles(f);
         try { const { role } = await getMyRole(id); setMyRole(role); } catch { /* default: owner */ }
+        try {
+          const branches = await listBranches(id);
+          const storedId = localStorage.getItem(`codemax-active-branch-${id}`);
+          const stored = storedId ? branches.find(b => b.id === storedId) : null;
+          setActiveBranch(stored ?? branches.find(b => b.name === "main") ?? branches[0] ?? null);
+        } catch { /* branches not yet created */ }
       } catch (e) { if (e instanceof ApiError && e.status === 401) router.replace("/login"); }
     })();
   }, [id, router]);
@@ -844,7 +852,7 @@ export default function ProjectPage() {
   async function executeBuild(finalPrompt: string) {
     setSending(true); setSendError("");
     try {
-      await sendPrompt(id, finalPrompt);
+      await sendPrompt(id, finalPrompt, activeBranch?.id);
       setStatusData(s => s ? { ...s, status: "building" } : s);
       setTimeout(fetchStatus, 500);
     } catch (err) { setSendError(err instanceof Error ? err.message : "Failed"); }
@@ -1070,13 +1078,29 @@ export default function ProjectPage() {
               className="flex-1 min-w-0 px-1.5 py-0.5 bg-[#1a1a1a] border border-[#333] rounded-[6px] text-sm font-medium text-white focus:outline-none focus:border-[#555]"
             />
           ) : (
-            <button
-              onClick={() => { setTitleValue(project?.name ?? ""); setTitleEditing(true); }}
-              className="font-medium text-sm truncate text-white flex-1 px-1 text-left hover:text-[#aaa] transition-colors"
-              title="Click to rename"
-            >
-              {project?.name ?? "..."}
-            </button>
+            <div className="flex-1 min-w-0 flex flex-col">
+              <button
+                onClick={() => { setTitleValue(project?.name ?? ""); setTitleEditing(true); }}
+                className="font-medium text-sm truncate text-white px-1 text-left hover:text-[#aaa] transition-colors"
+                title="Click to rename"
+              >
+                {project?.name ?? "..."}
+              </button>
+              {activeBranch && (
+                <button
+                  onClick={() => setShowVersions(true)}
+                  className="flex items-center gap-1 px-1 group"
+                  title="Version history"
+                >
+                  <svg className="w-2.5 h-2.5 text-[#333] group-hover:text-[#666] transition-colors flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M6 3v12m0 0a3 3 0 100 6 3 3 0 000-6zm0 0c3.314 0 6-2.686 6-6V9m0 0a3 3 0 100-6 3 3 0 000 6z" />
+                  </svg>
+                  <span className="text-[10px] font-mono text-[#333] group-hover:text-[#666] transition-colors truncate">
+                    {activeBranch.name}
+                  </span>
+                </button>
+              )}
+            </div>
           )}
           <button onClick={() => setChatOpen(false)} title="Collapse chat"
             className="p-1.5 text-[#444] hover:text-white transition-colors rounded-[8px] hover:bg-[#1a1a1a] flex-shrink-0">
@@ -1418,7 +1442,17 @@ export default function ProjectPage() {
         <VersionHistoryModal
           projectId={id}
           myRole={myRole}
+          activeBranchId={activeBranch?.id ?? null}
+          onCheckout={branch => {
+            setActiveBranch(branch);
+            localStorage.setItem(`codemax-active-branch-${id}`, branch.id);
+          }}
           onClose={() => setShowVersions(false)}
+          onTaskCreated={() => {
+            setShowVersions(false);
+            setStatusData(s => s ? { ...s, status: "building" } : s);
+            setTimeout(fetchStatus, 1000);
+          }}
         />
       )}
 

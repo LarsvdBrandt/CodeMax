@@ -12,7 +12,11 @@ public class QueuePublisher {
 
     private final RabbitTemplate rabbitTemplate;
 
+    public void publishJob(UUID taskId, UUID projectId, String prompt, UUID branchId) {
+        rabbitTemplate.convertAndSend(AmqpConfig.AI_JOBS_QUEUE, new JobMessage(taskId, projectId, prompt, branchId));
+    }
+
     public void publishJob(UUID taskId, UUID projectId, String prompt) {
-        rabbitTemplate.convertAndSend(AmqpConfig.AI_JOBS_QUEUE, new JobMessage(taskId, projectId, prompt));
+        publishJob(taskId, projectId, prompt, null);
     }
 }

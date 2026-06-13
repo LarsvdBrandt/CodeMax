@@ -11,4 +11,5 @@ public class JobMessage {
     private UUID taskId;
     private UUID projectId;
     private String prompt;
+    private UUID branchId;
 }

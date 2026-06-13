@@ -262,7 +262,7 @@ public class PipelineService {
 
             // Auto-commit version snapshot after successful build
             try {
-                versionService.autoCommit(projectId, taskId, project.getUserId(), task.getPrompt());
+                versionService.autoCommit(projectId, taskId, project.getUserId(), task.getPrompt(), task.getBranchId());
             } catch (Exception vEx) {
                 log.warn("Version auto-commit failed for task {}: {}", taskId, vEx.getMessage());
             }

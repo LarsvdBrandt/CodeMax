@@ -119,10 +119,10 @@ export async function getProjectStatus(id: string): Promise<ProjectStatus> {
   return request(`/projects/${id}/status`);
 }
 
-export async function sendPrompt(id: string, prompt: string): Promise<{ task_id: string }> {
+export async function sendPrompt(id: string, prompt: string, branchId?: string): Promise<{ task_id: string }> {
   return request(`/projects/${id}/prompt`, {
     method: "POST",
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt, branch_id: branchId ?? null }),
   });
 }
 

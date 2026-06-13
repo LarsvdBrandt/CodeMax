@@ -8,7 +8,7 @@ import java.util.UUID;
 
 public interface IVersionService {
     ProjectBranchDto createMainBranch(UUID projectId, UUID userId);
-    ProjectCommitDto autoCommit(UUID projectId, UUID taskId, UUID userId, String message);
+    ProjectCommitDto autoCommit(UUID projectId, UUID taskId, UUID userId, String message, UUID branchId);
     List<ProjectBranchDto> listBranches(UUID requestingUserId, UUID projectId);
     ProjectBranchDto createBranch(UUID requestingUserId, UUID projectId, String name, UUID parentBranchId);
     List<ProjectCommitDto> listCommits(UUID requestingUserId, UUID projectId, UUID branchId);

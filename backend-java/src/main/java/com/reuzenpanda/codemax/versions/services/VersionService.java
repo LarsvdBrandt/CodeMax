@@ -112,20 +112,30 @@ public class VersionService implements IVersionService {
 
     @Override
     @Transactional
-    public ProjectCommitDto autoCommit(UUID projectId, UUID taskId, UUID userId, String message) {
-        ProjectBranch mainBranch = branchRepo.findByProjectIdAndName(projectId, "main")
-            .orElseGet(() -> {
-                ProjectBranch b = new ProjectBranch();
-                b.setProjectId(projectId);
-                b.setName("main");
-                b.setStatus(BranchStatus.active);
-                b.setCreatedBy(userId);
-                return branchRepo.save(b);
-            });
+    public ProjectCommitDto autoCommit(UUID projectId, UUID taskId, UUID userId, String message, UUID branchId) {
+        ProjectBranch targetBranch;
+        if (branchId != null) {
+            targetBranch = branchRepo.findById(branchId)
+                .filter(b -> b.getProjectId().equals(projectId))
+                .orElseGet(() -> branchRepo.findByProjectIdAndName(projectId, "main").orElseGet(() -> {
+                    ProjectBranch b = new ProjectBranch();
+                    b.setProjectId(projectId); b.setName("main");
+                    b.setStatus(BranchStatus.active); b.setCreatedBy(userId);
+                    return branchRepo.save(b);
+                }));
+        } else {
+            targetBranch = branchRepo.findByProjectIdAndName(projectId, "main")
+                .orElseGet(() -> {
+                    ProjectBranch b = new ProjectBranch();
+                    b.setProjectId(projectId); b.setName("main");
+                    b.setStatus(BranchStatus.active); b.setCreatedBy(userId);
+                    return branchRepo.save(b);
+                });
+        }
 
         ProjectCommit commit = new ProjectCommit();
         commit.setProjectId(projectId);
-        commit.setBranchId(mainBranch.getId());
+        commit.setBranchId(targetBranch.getId());
         commit.setTaskId(taskId);
         commit.setMessage(message != null ? message : "Agent edit");
         commit.setCreatedBy(userId);
