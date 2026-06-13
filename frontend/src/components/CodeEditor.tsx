@@ -31,9 +31,10 @@ interface Props {
   filePath: string;
   initialContent: string;
   onSaved?: (newContent: string) => void;
+  readOnly?: boolean;
 }
 
-export default function CodeEditor({ projectId, filePath, initialContent, onSaved }: Props) {
+export default function CodeEditor({ projectId, filePath, initialContent, onSaved, readOnly = false }: Props) {
   const [content, setContent]           = useState(initialContent);
   const [isDirty, setIsDirty]           = useState(false);
   const [saving, setSaving]             = useState(false);
@@ -101,7 +102,7 @@ export default function CodeEditor({ projectId, filePath, initialContent, onSave
 
         <button
           onClick={handleSave}
-          disabled={!isDirty || saving}
+          disabled={readOnly || !isDirty || saving}
           className={`flex items-center gap-1.5 text-[11px] px-3 py-1 rounded-[8px] border transition-all flex-shrink-0 ml-4 ${
             savedBriefly
               ? "border-green-500/40 text-green-400 bg-green-500/10"
@@ -140,9 +141,10 @@ export default function CodeEditor({ projectId, filePath, initialContent, onSave
           height="100%"
           language={lang}
           value={content}
-          onChange={handleChange}
+          onChange={readOnly ? undefined : handleChange}
           theme="vs-dark"
           options={{
+            readOnly,
             fontSize: 13,
             fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, monospace",
             fontLigatures: true,

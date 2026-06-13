@@ -396,17 +396,22 @@ export default function VersionHistoryModal({
 
               {/* Tabs */}
               <div className="flex items-center px-4 py-2 border-b border-[#1e1e1e] gap-1 shrink-0">
-                {(["commits", "prs"] as const).map(t => (
-                  <button key={t} onClick={() => setTab(t)}
-                    className={`px-3 py-1 rounded-[8px] text-xs font-medium transition-colors ${tab === t ? "bg-[#1a1a1a] text-white" : "text-[#444] hover:text-[#888]"}`}>
-                    {t === "commits" ? "Commits" : "Merge Requests"}
-                    {t === "prs" && prs.filter(p => p.status === "open").length > 0 && (
+                <button onClick={() => setTab("commits")}
+                  className={`px-3 py-1 rounded-[8px] text-xs font-medium transition-colors ${tab === "commits" ? "bg-[#1a1a1a] text-white" : "text-[#444] hover:text-[#888]"}`}>
+                  Commits
+                </button>
+                {/* Observers cannot see merge requests */}
+                {myRole !== "observer" && (
+                  <button onClick={() => setTab("prs")}
+                    className={`px-3 py-1 rounded-[8px] text-xs font-medium transition-colors ${tab === "prs" ? "bg-[#1a1a1a] text-white" : "text-[#444] hover:text-[#888]"}`}>
+                    Merge Requests
+                    {prs.filter(p => p.status === "open").length > 0 && (
                       <span className="ml-1.5 px-1 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 text-[10px]">
                         {prs.filter(p => p.status === "open").length}
                       </span>
                     )}
                   </button>
-                ))}
+                )}
                 {selectedBranch && (
                   <div className="ml-3 flex items-center gap-1.5">
                     <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />

@@ -5,7 +5,7 @@ import Link from "next/link";
 import {
   getProject, getProjectStatus, listFiles, listTasks, sendPrompt, retryProject,
   stopPreview, startPreview, getPreviewLogs, clarifyPrompt, provideApiKey,
-  detectKeys, createApiKey, renameProject, getMyRole, listBranches, ApiError,
+  detectKeys, createApiKey, renameProject, getMyRole, listBranches, createBranch, ApiError,
   type Project, type ProjectFile, type ProjectStatus, type TaskRecord, type MissingKey,
   type ProjectBranch,
 } from "@/lib/api";
@@ -791,6 +791,12 @@ export default function ProjectPage() {
   const [showSettings, setShowSettings] = useState(false);
   const [activeBranch, setActiveBranch] = useState<ProjectBranch | null>(null);
 
+  // Maintainer branch-creation intercept
+  const [showBranchModal,      setShowBranchModal]      = useState(false);
+  const [branchModalName,      setBranchModalName]      = useState("");
+  const [branchModalPending,   setBranchModalPending]   = useState<string | null>(null);
+  const [branchModalCreating,  setBranchModalCreating]  = useState(false);
+
   // Clarification state
   interface Clarification {
     basePrompt: string;       // original user prompt
@@ -906,6 +912,16 @@ export default function ProjectPage() {
     if (!prompt.trim() || sending || clarifying) return;
     if (pendingBuild) return; // collecting keys — don't accept new prompts
     const text = prompt.trim();
+
+    // Maintainers cannot prompt to main — intercept and offer branch creation
+    if (myRole === "maintainer" && (!activeBranch || activeBranch.name === "main")) {
+      setPrompt("");
+      setBranchModalPending(text);
+      setBranchModalName("");
+      setShowBranchModal(true);
+      return;
+    }
+
     setPrompt("");
 
     // If we're mid-clarification: user typed a free-form answer
@@ -1002,12 +1018,56 @@ export default function ProjectPage() {
 
   const isBuilding  = statusData?.status === "building";
   const isReady     = statusData?.status === "ready";
-  const previewPort = statusData?.preview_port ?? project?.preview_port;
+  // Use branch preview port when on a non-main branch that has been built
+  const branchPreviewPort = activeBranch && activeBranch.name !== "main" ? activeBranch.preview_port : null;
+  const previewPort = branchPreviewPort ?? statusData?.preview_port ?? project?.preview_port;
   const previewUrl  = previewPort ? `http://localhost:${previewPort}` : null;
+  const onMainBranch = !activeBranch || activeBranch.name === "main";
+  const canPrompt   = myRole !== "observer" && (myRole !== "maintainer" || !onMainBranch);
+  const isReadOnly  = myRole === "observer" || (myRole === "maintainer" && onMainBranch);
   const errorCount  = tasks.filter(t => t.status === "error").length;
   const warnCount   = tasks.filter(t => t.agent_log.some(e => e.step.startsWith("autofix"))).length;
   const projectPages = getProjectPages(files);
   const iframeSrc   = previewUrl ? `${previewUrl}${currentRoute === "/" ? "" : currentRoute}` : null;
+
+  async function handleBranchModalConfirm() {
+    if (!branchModalName.trim() || !branchModalPending) return;
+    setBranchModalCreating(true);
+    try {
+      const branches = await listBranches(id);
+      const mainBranch = branches.find(b => b.name === "main") ?? branches[0];
+      if (!mainBranch) return;
+      const newBranch = await createBranch(id, branchModalName.trim(), mainBranch.id);
+      setActiveBranch(newBranch);
+      localStorage.setItem(`codemax-active-branch-${id}`, newBranch.id);
+      const pendingText = branchModalPending;
+      setShowBranchModal(false);
+      setBranchModalPending(null);
+      setBranchModalName("");
+      // Now fire the prompt on the new branch
+      setLocalMessages([{ role: "user", text: pendingText }]);
+      setSendError("");
+      setClarifying(true);
+      try {
+        const result = await clarifyPrompt(id, pendingText);
+        if (result.needs_clarification && result.question) {
+          setClarification({ basePrompt: pendingText, context: "", question: result.question, suggestions: result.suggestions ?? [], round: 1 });
+          setLocalMessages(m => [...m, { role: "ai", text: result.question! }]);
+        } else {
+          await startBuildWithKeyCheck(pendingText);
+        }
+      } catch {
+        setLocalMessages([]);
+        await executeBuild(pendingText);
+      } finally {
+        setClarifying(false);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setBranchModalCreating(false);
+    }
+  }
 
   return (
     <div className="h-screen flex bg-black text-white overflow-hidden p-2 gap-2">
@@ -1176,6 +1236,18 @@ export default function ProjectPage() {
           )}
           <div ref={chatEnd} />
         </div>
+
+        {/* Maintainer-on-main read-only notice */}
+        {myRole === "maintainer" && onMainBranch && (
+          <div className="px-4 py-3 border-t border-[#1a1a1a] flex items-center gap-2.5">
+            <svg className="w-3.5 h-3.5 text-[#444] flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+            </svg>
+            <p className="text-xs text-[#444] leading-relaxed flex-1">
+              You&apos;re viewing main. Type a prompt to create a branch and work on your changes.
+            </p>
+          </div>
+        )}
 
         {/* Input */}
         {myRole !== "observer" && <div className="p-3">
@@ -1346,6 +1418,7 @@ export default function ProjectPage() {
                       projectId={id}
                       filePath={selFile}
                       initialContent={selContent}
+                      readOnly={isReadOnly}
                       onSaved={newContent => {
                         setFiles(fs => fs.map(f =>
                           f.file_path === selFile ? { ...f, content: newContent } : f
@@ -1463,6 +1536,55 @@ export default function ProjectPage() {
           onClose={() => setShowSettings(false)}
           onProjectUpdated={p => setProject(p)}
         />
+      )}
+
+      {/* Branch creation modal for maintainers */}
+      {showBranchModal && (
+        <>
+          <div className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm" onClick={() => { setShowBranchModal(false); setBranchModalPending(null); }} />
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
+            <div className="pointer-events-auto w-full max-w-sm bg-[#0a0a0a] border border-[#1e1e1e] rounded-[16px] p-6 shadow-2xl">
+              <div className="flex items-center gap-2.5 mb-4">
+                <svg className="w-4 h-4 text-[#555]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M6 3v12m0 0a3 3 0 100 6 3 3 0 000-6zm0 0c3.314 0 6-2.686 6-6V9m0 0a3 3 0 100-6 3 3 0 000 6z" />
+                </svg>
+                <h3 className="text-sm font-semibold text-white">Create a branch</h3>
+              </div>
+              <p className="text-xs text-[#555] mb-4 leading-relaxed">
+                Maintainers work on branches — not directly on main. Give your branch a name and your prompt will run there.
+              </p>
+              {branchModalPending && (
+                <div className="bg-[#111] border border-[#1e1e1e] rounded-[8px] px-3 py-2 mb-4">
+                  <p className="text-[10px] text-[#444] mb-0.5">Your prompt</p>
+                  <p className="text-xs text-[#888] line-clamp-2">{branchModalPending}</p>
+                </div>
+              )}
+              <input
+                autoFocus
+                value={branchModalName}
+                onChange={e => setBranchModalName(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") handleBranchModalConfirm(); if (e.key === "Escape") { setShowBranchModal(false); setBranchModalPending(null); } }}
+                placeholder="e.g. feature/dark-mode"
+                className="w-full bg-[#111] border border-[#222] rounded-[10px] px-3 py-2.5 text-sm text-white placeholder-[#333] focus:outline-none focus:border-[#333] font-mono mb-4"
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={handleBranchModalConfirm}
+                  disabled={!branchModalName.trim() || branchModalCreating}
+                  className="flex-1 py-2.5 bg-white text-black text-sm font-semibold rounded-[10px] disabled:opacity-40 transition-colors hover:bg-gray-100"
+                >
+                  {branchModalCreating ? "Creating…" : "Create & continue"}
+                </button>
+                <button
+                  onClick={() => { setShowBranchModal(false); setBranchModalPending(null); }}
+                  className="flex-1 py-2.5 bg-[#1a1a1a] text-[#666] text-sm rounded-[10px] hover:text-white transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
       )}
     </div>
   );

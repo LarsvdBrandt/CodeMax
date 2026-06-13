@@ -60,6 +60,7 @@ public class PipelineService {
     private final ObjectMapper objectMapper;
     private final ResourcePatternResolver resourceLoader;
     private final IVersionService versionService;
+    private final com.reuzenpanda.codemax.versions.repositories.IProjectBranchRepository branchRepo;
 
     // Pack-based pipeline components
     private final PackRegistry packRegistry;
@@ -93,7 +94,23 @@ public class PipelineService {
 
         try {
             markRunning(task, project, prompt);
-            Path projectDir = Path.of(props.getProjectsDir(), projectId.toString());
+            UUID branchId = task.getBranchId();
+            final boolean isBranchBuild = branchId != null;
+
+            // For branch builds, work in an isolated directory
+            Path mainDir = Path.of(props.getProjectsDir(), projectId.toString());
+            Path projectDir;
+            if (isBranchBuild) {
+                projectDir = Path.of(props.getProjectsDir(), projectId + "_branch_" + branchId);
+                // Seed branch dir from main if it doesn't exist yet
+                if (!Files.exists(projectDir) && Files.exists(mainDir)) {
+                    copyDirectory(mainDir, projectDir);
+                } else if (!Files.exists(projectDir)) {
+                    Files.createDirectories(projectDir);
+                }
+            } else {
+                projectDir = mainDir;
+            }
             Map<String, String> answers = project.getAnswers() != null ? project.getAnswers() : Map.of();
 
             // ── Infrastructure setup ──────────────────────────────────────────
@@ -229,12 +246,23 @@ public class PipelineService {
             // ── Build Docker container ────────────────────────────────────────
             pipeLog(task, "build", "running", "Starting preview container");
             String appName = answers.getOrDefault("business_name", "My App");
-            String dbName  = "proj_" + projectId.toString().replace("-", "_");
-            DockerService.PreviewResult preview = docker.provisionPreview(
-                projectId, project.getContainerId(), jwtSecret, appName, dbName);
-            project.setContainerId(preview.containerId());
-            project.setPreviewPort(preview.port());
-            projectRepo.save(project);
+            DockerService.PreviewResult preview;
+            if (isBranchBuild) {
+                String dbName = "branch_" + branchId.toString().replace("-", "_");
+                preview = docker.provisionBranchPreview(branchId, projectDir, jwtSecret, appName, dbName);
+                // Store container info on the branch, not on the project
+                branchRepo.findById(branchId).ifPresent(branch -> {
+                    branch.setContainerId(preview.containerId());
+                    branch.setPreviewPort(preview.port());
+                    branchRepo.save(branch);
+                });
+            } else {
+                String dbName = "proj_" + projectId.toString().replace("-", "_");
+                preview = docker.provisionPreview(projectId, project.getContainerId(), jwtSecret, appName, dbName);
+                project.setContainerId(preview.containerId());
+                project.setPreviewPort(preview.port());
+                projectRepo.save(project);
+            }
             pipeLog(task, "build", "running", "Container started on port " + preview.port());
 
             String containerId = preview.containerId();
@@ -541,6 +569,20 @@ public class PipelineService {
         byte[] bytes = new byte[32];
         new SecureRandom().nextBytes(bytes);
         return HexFormat.of().formatHex(bytes);
+    }
+
+    private void copyDirectory(Path src, Path dest) throws IOException {
+        Files.createDirectories(dest);
+        try (Stream<Path> stream = Files.walk(src)) {
+            for (Path source : (Iterable<Path>) stream::iterator) {
+                Path target = dest.resolve(src.relativize(source));
+                if (Files.isDirectory(source)) {
+                    Files.createDirectories(target);
+                } else {
+                    Files.copy(source, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+        }
     }
 
     @Transactional
