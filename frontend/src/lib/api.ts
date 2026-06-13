@@ -11,6 +11,16 @@ function getToken(): string | null {
   return localStorage.getItem("token");
 }
 
+// Refreshes the HS256 JWT from the active Better Auth session and stores it.
+// Call this once after sign-in and whenever the token may have expired.
+export async function refreshApiToken(): Promise<string | null> {
+  const res = await fetch("/api/get-api-token", { credentials: "include" });
+  if (!res.ok) return null;
+  const { token } = await res.json();
+  localStorage.setItem("token", token);
+  return token;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
@@ -25,22 +35,6 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new ApiError(res.status, err.detail ?? "Request failed");
   }
   return res.json() as Promise<T>;
-}
-
-// ─── Auth ────────────────────────────────────────────────────────────────────
-
-export async function register(email: string, password: string): Promise<{ access_token: string }> {
-  return request("/auth/register", {
-    method: "POST",
-    body: JSON.stringify({ email, password }),
-  });
-}
-
-export async function login(email: string, password: string): Promise<{ access_token: string }> {
-  return request("/auth/login", {
-    method: "POST",
-    body: JSON.stringify({ email, password }),
-  });
 }
 
 // ─── Projects ────────────────────────────────────────────────────────────────
@@ -191,16 +185,63 @@ export interface ApiKey {
   id: string; name: string; service: string; key_preview: string; created_at: string;
 }
 
+// User profile is managed via Better Auth (same PostgreSQL table).
+// These helpers call Better Auth's own API endpoints to keep the existing UserProfile shape.
+
 export async function getMe(): Promise<UserProfile> {
-  return request("/auth/me");
+  const res = await fetch("/auth/get-session", { credentials: "include" });
+  if (!res.ok) throw new ApiError(res.status, "Not authenticated");
+  const { user: u } = await res.json();
+  if (!u) throw new ApiError(401, "Not authenticated");
+  return {
+    id: u.id,
+    email: u.email,
+    full_name: u.fullName ?? null,
+    company_name: u.companyName ?? null,
+    company_address: u.companyAddress ?? null,
+    company_city: u.companyCity ?? null,
+    company_country: u.companyCountry ?? null,
+    website: u.website ?? null,
+    bio: u.bio ?? null,
+    created_at: typeof u.createdAt === "string" ? u.createdAt : new Date(u.createdAt).toISOString(),
+  };
 }
 
-export async function updateMe(data: Partial<Omit<UserProfile, "id"|"email"|"created_at">>): Promise<UserProfile> {
-  return request("/auth/me", { method: "PUT", body: JSON.stringify(data) });
+export async function updateMe(
+  data: Partial<Omit<UserProfile, "id" | "email" | "created_at">>
+): Promise<UserProfile> {
+  const payload: Record<string, unknown> = {};
+  if (data.full_name !== undefined) { payload.name = data.full_name ?? ""; payload.fullName = data.full_name; }
+  if (data.company_name !== undefined) payload.companyName = data.company_name;
+  if (data.company_address !== undefined) payload.companyAddress = data.company_address;
+  if (data.company_city !== undefined) payload.companyCity = data.company_city;
+  if (data.company_country !== undefined) payload.companyCountry = data.company_country;
+  if (data.website !== undefined) payload.website = data.website;
+  if (data.bio !== undefined) payload.bio = data.bio;
+  const res = await fetch("/auth/update-user", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new ApiError(res.status, err.message ?? "Update failed");
+  }
+  return getMe();
 }
 
 export async function changePassword(current_password: string, new_password: string): Promise<void> {
-  return request("/auth/me/password", { method: "POST", body: JSON.stringify({ current_password, new_password }) });
+  const res = await fetch("/auth/change-password", {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ currentPassword: current_password, newPassword: new_password }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new ApiError(res.status, err.message ?? "Failed to change password");
+  }
 }
 
 export async function listApiKeys(): Promise<ApiKey[]> {

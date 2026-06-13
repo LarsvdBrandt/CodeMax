@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { login } from "@/lib/api";
+import { authClient } from "@/lib/auth-client";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -16,11 +16,20 @@ export default function LoginPage() {
     setError("");
     setLoading(true);
     try {
-      const { access_token } = await login(email, password);
-      localStorage.setItem("token", access_token);
+      const { error: signInError } = await authClient.signIn.email({ email, password });
+      if (signInError) {
+        setError(signInError.message ?? "Login failed");
+        return;
+      }
+      // Get HS256 JWT for Spring Boot API calls
+      const res = await fetch("/api/get-api-token", { credentials: "include" });
+      if (res.ok) {
+        const { token } = await res.json();
+        localStorage.setItem("token", token);
+      }
       router.push("/dashboard");
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Login failed");
+    } catch {
+      setError("Login failed");
     } finally {
       setLoading(false);
     }
@@ -60,12 +69,17 @@ export default function LoginPage() {
             {loading ? "Signing in..." : "Sign in"}
           </button>
         </form>
-        <p className="text-center text-sm text-[#555] mt-6">
-          No account?{" "}
-          <Link href="/register" className="text-white hover:underline">
-            Create one
+        <div className="flex justify-between items-center mt-6">
+          <p className="text-sm text-[#555]">
+            No account?{" "}
+            <Link href="/register" className="text-white hover:underline">
+              Create one
+            </Link>
+          </p>
+          <Link href="/forgot-password" className="text-sm text-[#555] hover:text-white">
+            Forgot password?
           </Link>
-        </p>
+        </div>
       </div>
     </div>
   );

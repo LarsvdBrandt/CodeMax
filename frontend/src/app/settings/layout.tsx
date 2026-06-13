@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { getMe, type UserProfile } from "@/lib/api";
+import { authClient } from "@/lib/auth-client";
 
 function initials(user: UserProfile | null) {
   if (user?.full_name) return user.full_name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase();
@@ -28,8 +29,9 @@ export default function SettingsLayout({ children }: { children: React.ReactNode
     getMe().then(setUser).catch(() => {});
   }, [router]);
 
-  function logout() {
+  async function logout() {
     localStorage.removeItem("token");
+    await authClient.signOut();
     router.push("/login");
   }
 

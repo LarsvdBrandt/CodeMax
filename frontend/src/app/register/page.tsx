@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { register } from "@/lib/api";
+import { authClient } from "@/lib/auth-client";
 
 export default function RegisterPage() {
   const router = useRouter();
@@ -16,11 +16,24 @@ export default function RegisterPage() {
     setError("");
     setLoading(true);
     try {
-      const { access_token } = await register(email, password);
-      localStorage.setItem("token", access_token);
+      const { error: signUpError } = await authClient.signUp.email({
+        email,
+        password,
+        name: email,
+      });
+      if (signUpError) {
+        setError(signUpError.message ?? "Registration failed");
+        return;
+      }
+      // Get HS256 JWT for Spring Boot API calls
+      const res = await fetch("/api/get-api-token", { credentials: "include" });
+      if (res.ok) {
+        const { token } = await res.json();
+        localStorage.setItem("token", token);
+      }
       router.push("/dashboard");
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Registration failed");
+    } catch {
+      setError("Registration failed");
     } finally {
       setLoading(false);
     }

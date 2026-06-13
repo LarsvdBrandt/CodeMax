@@ -116,6 +116,11 @@ services:
     env_file: .env
     environment:
       BACKEND_URL: http://backend:8000
+      DATABASE_URL: postgresql://codemax:codemax@postgres:5432/codemax
+      BETTER_AUTH_URL: http://localhost:3000
+      # Override in .env to use your verified Resend domain.
+      # Default falls back to onboarding@resend.dev (Resend test address).
+      # RESEND_FROM_EMAIL: CodeMax <noreply@yourdomain.com>
     volumes:
       - ./frontend:/app
       - /app/node_modules
