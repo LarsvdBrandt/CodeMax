@@ -1,5 +1,6 @@
 package com.reuzenpanda.codemax.teams.repositories;
 
+import com.reuzenpanda.codemax.teams.entities.MemberStatus;
 import com.reuzenpanda.codemax.teams.entities.ProjectMember;
 
 import java.util.List;
@@ -15,4 +16,5 @@ public interface IProjectMemberRepository {
     Optional<ProjectMember> findByProjectIdAndInviteEmail(UUID projectId, String email);
     boolean existsByProjectIdAndInviteEmail(UUID projectId, String email);
     void deleteById(UUID id);
+    List<ProjectMember> findByUserIdAndStatus(UUID userId, MemberStatus status);
 }

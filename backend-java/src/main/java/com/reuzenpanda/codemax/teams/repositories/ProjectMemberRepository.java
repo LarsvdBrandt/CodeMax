@@ -1,5 +1,6 @@
 package com.reuzenpanda.codemax.teams.repositories;
 
+import com.reuzenpanda.codemax.teams.entities.MemberStatus;
 import com.reuzenpanda.codemax.teams.entities.ProjectMember;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -22,4 +23,5 @@ public class ProjectMemberRepository implements IProjectMemberRepository {
     @Override public Optional<ProjectMember> findByProjectIdAndInviteEmail(UUID projectId, String email) { return jpa.findByProjectIdAndInviteEmail(projectId, email); }
     @Override public boolean existsByProjectIdAndInviteEmail(UUID projectId, String email) { return jpa.existsByProjectIdAndInviteEmail(projectId, email); }
     @Override public void deleteById(UUID id) { jpa.deleteById(id); }
+    @Override public List<ProjectMember> findByUserIdAndStatus(UUID userId, MemberStatus status) { return jpa.findByUserIdAndStatus(userId, status); }
 }
