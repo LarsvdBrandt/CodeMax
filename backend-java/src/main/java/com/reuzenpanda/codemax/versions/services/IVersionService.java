@@ -21,5 +21,8 @@ public interface IVersionService {
     /** Rejects PR and creates a new task for the agent to rework on the source branch */
     RejectPrResult rejectPullRequest(UUID reviewerUserId, UUID projectId, UUID prId);
 
+    /** Copies the branch's latest commit files to main (disk + DB + new commit). Main is updated in-place. */
+    ProjectBranchDto promoteToMain(UUID userId, UUID projectId, UUID branchId);
+
     record RejectPrResult(ProjectPullRequestDto pr, TaskDto task) {}
 }

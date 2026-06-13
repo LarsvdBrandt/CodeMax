@@ -439,3 +439,7 @@ export async function approvePullRequest(projectId: string, prId: string): Promi
 export async function rejectPullRequest(projectId: string, prId: string): Promise<{ pr: ProjectPullRequest; task: TaskRecord }> {
   return request(`/projects/${projectId}/versions/pull-requests/${prId}/reject`, { method: "POST" });
 }
+
+export async function promoteBranchToMain(projectId: string, branchId: string): Promise<ProjectBranch> {
+  return request(`/projects/${projectId}/versions/branches/${branchId}/promote`, { method: "POST" });
+}

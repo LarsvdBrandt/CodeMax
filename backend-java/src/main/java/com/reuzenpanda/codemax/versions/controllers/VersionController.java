@@ -64,6 +64,13 @@ public class VersionController {
         return ResponseEntity.ok(versionService.stopBranchPreview(userId(req), projectId, branchId));
     }
 
+    @PostMapping("/branches/{branchId}/promote")
+    public ResponseEntity<ProjectBranchDto> promote(@PathVariable UUID projectId,
+                                                     @PathVariable UUID branchId,
+                                                     HttpServletRequest req) {
+        return ResponseEntity.ok(versionService.promoteToMain(userId(req), projectId, branchId));
+    }
+
     // ── Commits ────────────────────────────────────────────────────────────────
 
     @GetMapping("/branches/{branchId}/commits")

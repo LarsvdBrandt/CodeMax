@@ -3,7 +3,7 @@ import { useState, useEffect, useCallback } from "react";
 import {
   listBranches, createBranch, listCommits,
   listPullRequests, createPullRequest, approvePullRequest, rejectPullRequest,
-  startBranchPreview, stopBranchPreview,
+  startBranchPreview, stopBranchPreview, promoteBranchToMain,
   type ProjectBranch, type ProjectCommit, type ProjectPullRequest,
 } from "@/lib/api";
 
@@ -131,7 +131,9 @@ export default function VersionHistoryModal({
   const [tab,            setTab]            = useState<"commits" | "prs">("commits");
   const [loading,        setLoading]        = useState(true);
   const [commitCounts,   setCommitCounts]   = useState<Record<string, number>>({});
-  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewLoading,  setPreviewLoading]  = useState(false);
+  const [promoteLoading,  setPromoteLoading]  = useState(false);
+  const [showPromoteConfirm, setShowPromoteConfirm] = useState(false);
 
   // Forms
   const [showNewBranch,  setShowNewBranch]  = useState(false);
@@ -208,6 +210,17 @@ export default function VersionHistoryModal({
       loadBranches();
     } catch (e) { console.error(e); }
     finally { setPreviewLoading(false); }
+  }
+
+  async function handlePromote() {
+    if (!selectedBranch || isMain) return;
+    setPromoteLoading(true);
+    try {
+      await promoteBranchToMain(projectId, selectedBranch.id);
+      setShowPromoteConfirm(false);
+      loadBranches();
+    } catch (e) { console.error(e); }
+    finally { setPromoteLoading(false); }
   }
 
   async function handleApprove(prId: string) {
@@ -386,6 +399,36 @@ export default function VersionHistoryModal({
                     >
                       {previewLoading ? "…" : selectedBranch.container_id ? "Stop Preview" : "Start Preview"}
                     </button>
+                  )}
+                  {!isMain && canApprove && !showPromoteConfirm && (
+                    <button
+                      onClick={() => setShowPromoteConfirm(true)}
+                      className="w-full text-xs py-1.5 rounded-[6px] transition-colors text-amber-400 bg-amber-500/5 border border-amber-500/15 hover:bg-amber-500/10"
+                    >
+                      Set as main
+                    </button>
+                  )}
+                  {!isMain && canApprove && showPromoteConfirm && (
+                    <div className="rounded-[8px] bg-amber-500/5 border border-amber-500/20 p-2 space-y-1.5">
+                      <p className="text-[10px] text-amber-300/80 leading-snug">
+                        This will replace all main branch files with <span className="font-semibold">{selectedBranch.name}</span>. Continue?
+                      </p>
+                      <div className="flex gap-1.5">
+                        <button
+                          onClick={handlePromote}
+                          disabled={promoteLoading}
+                          className="flex-1 text-[10px] py-1 rounded-[5px] font-medium transition-colors text-black bg-amber-400 hover:bg-amber-300 disabled:opacity-50"
+                        >
+                          {promoteLoading ? "…" : "Confirm"}
+                        </button>
+                        <button
+                          onClick={() => setShowPromoteConfirm(false)}
+                          className="flex-1 text-[10px] py-1 rounded-[5px] transition-colors text-[#666] bg-[#111] border border-[#1e1e1e] hover:text-white"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
                   )}
                 </div>
               )}

@@ -116,7 +116,10 @@ public class PipelineService {
             // ── Infrastructure setup ──────────────────────────────────────────
             pipeLog(task, "seed_template", "running", "Seeding project template");
             seedTemplate(projectDir);
-            persistSeededFiles(projectDir, projectId);
+            // For branch builds the dir is already seeded from main; skip DB write
+            if (!isBranchBuild) {
+                persistSeededFiles(projectDir, projectId);
+            }
             pipeLog(task, "seed_template", "done", "Template copied");
 
             pipeLog(task, "env_vars", "running", "Configuring environment");
@@ -539,7 +542,11 @@ public class PipelineService {
         Path dest = projectDir.resolve(relativePath);
         Files.createDirectories(dest.getParent());
         Files.writeString(dest, content);
-        UUID projectId = UUID.fromString(projectDir.getFileName().toString());
+        // Branch build dirs are named "{projectId}_branch_{branchId}" — skip DB write
+        // so branch changes don't overwrite the main project_files table.
+        String dirName = projectDir.getFileName().toString();
+        if (dirName.contains("_branch_")) return;
+        UUID projectId = UUID.fromString(dirName);
         ProjectFile pf = fileRepo.findByProjectIdAndFilePath(projectId, relativePath)
             .orElseGet(() -> {
                 ProjectFile f = new ProjectFile();

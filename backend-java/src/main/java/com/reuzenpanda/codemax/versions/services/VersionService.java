@@ -277,7 +277,8 @@ public class VersionService implements IVersionService {
         }).toList();
         commitFileRepo.saveAll(copies);
 
-        // Update project_files to reflect merged content
+        // Update project_files + disk for hot reload in main container
+        Path mainDir = Path.of(props.getProjectsDir(), projectId.toString());
         for (ProjectCommitFile cf : sourceFiles) {
             ProjectFile pf = fileRepo.findByProjectIdAndFilePath(projectId, cf.getFilePath())
                 .orElseGet(() -> {
@@ -288,6 +289,15 @@ public class VersionService implements IVersionService {
                 });
             pf.setContent(cf.getContent());
             fileRepo.save(pf);
+            try {
+                Path dest = mainDir.resolve(cf.getFilePath()).normalize();
+                if (dest.startsWith(mainDir) && cf.getContent() != null) {
+                    Files.createDirectories(dest.getParent());
+                    Files.writeString(dest, cf.getContent());
+                }
+            } catch (IOException e) {
+                log.warn("Could not write merged file to disk: {}", cf.getFilePath());
+            }
         }
 
         // Stop branch preview container if running
@@ -339,6 +349,66 @@ public class VersionService implements IVersionService {
         taskDto.setCreatedAt(task.getCreatedAt());
 
         return new RejectPrResult(mapper.toPrDto(pr), taskDto);
+    }
+
+    @Override
+    @Transactional
+    public ProjectBranchDto promoteToMain(UUID userId, UUID projectId, UUID branchId) {
+        requireAdminOrOwner(userId, projectId);
+
+        ProjectBranch sourceBranch = branchRepo.findById(branchId)
+            .filter(b -> b.getProjectId().equals(projectId))
+            .orElseThrow(() -> new NotFoundException("Branch not found"));
+        if ("main".equals(sourceBranch.getName())) throw new ForbiddenException("Cannot promote main to main");
+
+        ProjectBranch mainBranch = branchRepo.findByProjectIdAndName(projectId, "main")
+            .orElseThrow(() -> new NotFoundException("Main branch not found"));
+
+        ProjectCommit sourceCommit = commitRepo.findTopByBranchIdOrderByCreatedAtDesc(branchId)
+            .orElseThrow(() -> new NotFoundException("No commits on source branch"));
+        List<ProjectCommitFile> sourceFiles = commitFileRepo.findByCommitId(sourceCommit.getId());
+
+        // New commit on main recording the promotion
+        ProjectCommit promoteCommit = new ProjectCommit();
+        promoteCommit.setProjectId(projectId);
+        promoteCommit.setBranchId(mainBranch.getId());
+        promoteCommit.setMessage("Promote: " + sourceBranch.getName() + " → main");
+        promoteCommit.setCreatedBy(userId);
+        promoteCommit = commitRepo.save(promoteCommit);
+
+        final UUID commitId = promoteCommit.getId();
+        commitFileRepo.saveAll(sourceFiles.stream().map(f -> {
+            ProjectCommitFile copy = new ProjectCommitFile();
+            copy.setCommitId(commitId);
+            copy.setFilePath(f.getFilePath());
+            copy.setContent(f.getContent());
+            return copy;
+        }).toList());
+
+        // Write to project_files + disk
+        Path mainDir = Path.of(props.getProjectsDir(), projectId.toString());
+        for (ProjectCommitFile cf : sourceFiles) {
+            ProjectFile pf = fileRepo.findByProjectIdAndFilePath(projectId, cf.getFilePath())
+                .orElseGet(() -> {
+                    ProjectFile newFile = new ProjectFile();
+                    newFile.setProjectId(projectId);
+                    newFile.setFilePath(cf.getFilePath());
+                    return newFile;
+                });
+            pf.setContent(cf.getContent());
+            fileRepo.save(pf);
+            try {
+                Path dest = mainDir.resolve(cf.getFilePath()).normalize();
+                if (dest.startsWith(mainDir) && cf.getContent() != null) {
+                    Files.createDirectories(dest.getParent());
+                    Files.writeString(dest, cf.getContent());
+                }
+            } catch (IOException e) {
+                log.warn("Could not write promoted file to disk: {}", cf.getFilePath());
+            }
+        }
+
+        return mapper.toBranchDto(mainBranch);
     }
 
     // ── Private helpers ────────────────────────────────────────────────────────
