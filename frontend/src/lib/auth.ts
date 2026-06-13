@@ -103,11 +103,12 @@ export const auth = betterAuth({
     user: {
       create: {
         after: async (user) => {
-          await sendEmail(
+          // Fire and forget — don't delay sign-up response waiting for email.
+          sendEmail(
             user.email,
             `Welcome to CodeMax`,
             welcomeEmail(user.name ?? user.email),
-          );
+          ).catch((err) => console.error("[CodeMax email] Welcome email error:", err));
         },
       },
     },
