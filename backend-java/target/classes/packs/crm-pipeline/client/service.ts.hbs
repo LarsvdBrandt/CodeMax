@@ -1,0 +1,38 @@
+import { tokenStorage } from '@/services/api'
+import { api as cfg } from '@/config/api'
+import type { I{{EntityName}}, Create{{EntityName}}Request, PipelineStage } from '../types'
+
+async function req<T>(path: string, token: string, options: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${cfg.baseUrl}${path}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+      ...(options.headers as Record<string, string>),
+    },
+  })
+  const json = await res.json()
+  if (!res.ok) throw new Error(json?.message ?? res.statusText)
+  return (json?.data ?? json) as T
+}
+
+export function get{{Entities}}(token: string, stage?: string): Promise<I{{EntityName}}[]> {
+  const qs = stage ? `?stage=${stage}` : ''
+  return req<I{{EntityName}}[]>(`/api/{{entities}}${qs}`, token)
+}
+
+export function create{{EntityName}}(payload: Create{{EntityName}}Request, token: string): Promise<I{{EntityName}}> {
+  return req<I{{EntityName}}>('/api/{{entities}}', token, { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export function update{{EntityName}}(id: string, payload: Partial<Create{{EntityName}}Request>, token: string): Promise<I{{EntityName}}> {
+  return req<I{{EntityName}}>(`/api/{{entities}}/${id}`, token, { method: 'PUT', body: JSON.stringify(payload) })
+}
+
+export function update{{EntityName}}Stage(id: string, stage: PipelineStage, token: string): Promise<I{{EntityName}}> {
+  return req<I{{EntityName}}>(`/api/{{entities}}/${id}/stage`, token, { method: 'PATCH', body: JSON.stringify({ stage }) })
+}
+
+export function delete{{EntityName}}(id: string, token: string): Promise<void> {
+  return req<void>(`/api/{{entities}}/${id}`, token, { method: 'DELETE' })
+}

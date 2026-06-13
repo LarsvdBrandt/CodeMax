@@ -1,0 +1,152 @@
+import { useState, useEffect } from 'react'
+import { useAuth } from '@/hooks/useAuth'
+import { Skeleton } from '@/components/ui/Skeleton'
+import { TrendingUp, Package, Activity, BarChart2 } from 'lucide-react'
+import { api as cfg } from '@/config/api'
+
+interface StatRow { label: string; count: number }
+interface RecentRow { label: string; sub?: string; badge?: string }
+interface Stats {
+  total: number
+  thisMonth: number
+  recent: RecentRow[]
+  breakdown: StatRow[]
+  breakdownKey: string
+}
+
+function StatCard({
+  label, value, sub, icon: Icon, color = 'bg-blue-50 text-blue-600',
+}: { label: string; value: string | number; sub?: string; icon: React.ElementType; color?: string }) {
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-5 flex items-start gap-4 shadow-sm">
+      <div className={`rounded-lg p-2.5 ${color}`}><Icon className="w-5 h-5" /></div>
+      <div>
+        <p className="text-sm text-gray-500">{label}</p>
+        <p className="text-2xl font-bold text-gray-900 mt-0.5">{value}</p>
+        {sub && <p className="text-xs text-gray-400 mt-0.5">{sub}</p>}
+      </div>
+    </div>
+  )
+}
+
+async function fetchStats(token: string): Promise<Stats> {
+  const res = await fetch(`${cfg.baseUrl}/api/{{entities}}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  const data = await res.json()
+  const items: any[] = Array.isArray(data) ? data : (data.data ?? [])
+  const now = new Date()
+  const thisMonth = items.filter(i => {
+    const d = new Date(i.createdAt)
+    return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear()
+  }).length
+
+  // Build breakdown by first string field that looks like a status/category/stage
+  const breakdownKey = ['stage', 'status', 'category', 'type', 'plan'].find(k => items.some(i => i[k])) ?? ''
+  const breakdown: StatRow[] = []
+  if (breakdownKey) {
+    const counts: Record<string, number> = {}
+    items.forEach(i => { const v = i[breakdownKey]; if (v) counts[v] = (counts[v] ?? 0) + 1 })
+    Object.entries(counts).forEach(([label, count]) => breakdown.push({ label, count }))
+    breakdown.sort((a, b) => b.count - a.count)
+  }
+
+  const titleKey = ['title', 'name', 'email', 'company'].find(k => items.some(i => i[k])) ?? 'title'
+  const recent: RecentRow[] = items.slice(0, 8).map(i => ({
+    label: i[titleKey] ?? 'Untitled',
+    sub: i.createdAt ? new Date(i.createdAt).toLocaleDateString() : undefined,
+    badge: breakdownKey ? i[breakdownKey] : undefined,
+  }))
+
+  return { total: items.length, thisMonth, recent, breakdown, breakdownKey }
+}
+
+export default function DashboardPage() {
+  const { token } = useAuth()
+  const [loading, setLoading] = useState(true)
+  const [stats, setStats] = useState<Stats | null>(null)
+
+  useEffect(() => {
+    if (!token) return
+    fetchStats(token).then(setStats).catch(console.error).finally(() => setLoading(false))
+  }, [token])
+
+  if (loading) {
+    return (
+      <div className="p-6 space-y-6">
+        <Skeleton className="h-8 w-48" />
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-28 w-full rounded-xl" />)}
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <Skeleton className="h-64 rounded-xl" />
+          <Skeleton className="h-64 rounded-xl" />
+        </div>
+      </div>
+    )
+  }
+
+  if (!stats) return null
+
+  return (
+    <div className="p-6 space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+        <p className="text-sm text-gray-500 mt-0.5">Overview of your {{entities}}</p>
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard label="Total {{Entities}}" value={stats.total} icon={Package} color="bg-blue-50 text-blue-600" />
+        <StatCard label="This Month" value={stats.thisMonth} icon={TrendingUp} color="bg-green-50 text-green-600" />
+        <StatCard label="Active" value={stats.total} icon={Activity} color="bg-purple-50 text-purple-600" />
+        <StatCard label="Pipeline" value={stats.breakdown.length} sub="distinct stages" icon={BarChart2} color="bg-orange-50 text-orange-600" />
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+          <h2 className="font-semibold text-gray-800 mb-3">Recent {{Entities}}</h2>
+          <div>
+            {stats.recent.map((item, i) => (
+              <div key={i} className="flex items-center justify-between py-2.5 border-b border-gray-100 last:border-0">
+                <div>
+                  <p className="text-sm font-medium text-gray-800">{item.label}</p>
+                  {item.sub && <p className="text-xs text-gray-400">{item.sub}</p>}
+                </div>
+                {item.badge && (
+                  <span className="text-xs bg-gray-100 text-gray-600 rounded-full px-2.5 py-0.5 font-medium capitalize">
+                    {item.badge}
+                  </span>
+                )}
+              </div>
+            ))}
+            {stats.recent.length === 0 && (
+              <p className="text-sm text-gray-400 py-4 text-center">No {{entities}} yet</p>
+            )}
+          </div>
+        </div>
+
+        {stats.breakdown.length > 0 && (
+          <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
+            <h2 className="font-semibold text-gray-800 mb-3 capitalize">{stats.breakdownKey} Breakdown</h2>
+            <div className="space-y-3">
+              {stats.breakdown.map((row, i) => (
+                <div key={i}>
+                  <div className="flex justify-between text-sm mb-1">
+                    <span className="text-gray-600 capitalize">{row.label}</span>
+                    <span className="font-medium text-gray-800">{row.count}</span>
+                  </div>
+                  <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-blue-500 rounded-full"
+                      style={{ width: `${Math.min(100, (row.count / stats.total) * 100)}%` }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}

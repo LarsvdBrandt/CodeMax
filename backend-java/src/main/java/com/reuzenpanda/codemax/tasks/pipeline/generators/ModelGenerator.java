@@ -5,6 +5,7 @@ import com.reuzenpanda.codemax.common.config.CodeMaxProperties;
 import com.reuzenpanda.codemax.tasks.pipeline.model.AppSpecification;
 import com.reuzenpanda.codemax.tasks.pipeline.model.EntitySpec;
 import com.reuzenpanda.codemax.tasks.pipeline.model.FieldSpec;
+import com.reuzenpanda.codemax.tasks.pipeline.model.RelationSpec;
 import com.reuzenpanda.codemax.tasks.pipeline.model.TemplateKnowledge;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -57,7 +58,20 @@ public class ModelGenerator {
             sb.append("\n");
         }
         sb.append("\nAlways include: userId (ObjectId ref 'User', required), createdAt, updatedAt (via timestamps: true).\n");
-        sb.append("Export both the Mongoose model as default and a TypeScript interface 'I").append(entity.name()).append("' at the top.\n");
+
+        // Add relation fields
+        RelationSpec belongsTo = entity.belongsTo();
+        if (belongsTo != null) {
+            sb.append("\nThis entity belongs to '").append(belongsTo.entity()).append("'. ");
+            sb.append("Add this field to the Mongoose schema:\n");
+            sb.append("  ").append(belongsTo.foreignKey())
+              .append(": { type: Schema.Types.ObjectId, ref: '").append(belongsTo.entity())
+              .append("', required: true }\n");
+            sb.append("Also add it to the TypeScript interface as: ")
+              .append(belongsTo.foreignKey()).append(": string\n");
+        }
+
+        sb.append("\nExport both the Mongoose model as default and a TypeScript interface 'I").append(entity.name()).append("' at the top.\n");
         sb.append("Output ONLY the TypeScript file content. No markdown. No explanation.");
         return sb.toString();
     }

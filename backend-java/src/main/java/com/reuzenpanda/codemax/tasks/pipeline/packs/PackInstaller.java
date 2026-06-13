@@ -1,6 +1,8 @@
 package com.reuzenpanda.codemax.tasks.pipeline.packs;
 
 import com.reuzenpanda.codemax.tasks.pipeline.generators.NavigationGenerator;
+import com.reuzenpanda.codemax.tasks.pipeline.model.AppSpecification;
+import com.reuzenpanda.codemax.tasks.pipeline.model.BrandingSpec;
 import com.reuzenpanda.codemax.tasks.pipeline.model.EntitySpec;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -67,7 +69,17 @@ public class PackInstaller {
         }
 
         // Write a clean routes/index.ts referencing only auth + this entity (no todos/users/contact)
-        writeCleanRouteIndex(projectDir, tokens.get("entities"));
+        // Skip for stats-dashboard — it has no server routes; primary pack already wrote the index
+        if (!"stats-dashboard".equals(packName)) {
+            writeCleanRouteIndex(projectDir, tokens.get("entities"));
+        }
+
+        // stats-dashboard has no entity routes — skip nav patching, caller handles it
+        if ("stats-dashboard".equals(packName)) {
+            schemaService.writeSchema(projectDir, packName, entity);
+            log.info("PackInstaller: '{}' pack installed successfully", packName);
+            return;
+        }
 
         // Update App.tsx + Navbar via NavigationGenerator (deterministic)
         EntitySpec entitySpec = new EntitySpec(
@@ -76,7 +88,11 @@ public class PackInstaller {
             "/" + tokens.get("entities"),
             List.of()
         );
-        navGen.generate(projectDir, null, entitySpec);
+        AppSpecification minimalSpec = new AppSpecification(
+            tokens.get("EntityName"), "", new BrandingSpec("99 102 241", "", "", "", List.of()),
+            List.of(entitySpec), List.of(), List.of(), false
+        );
+        navGen.generateAll(projectDir, minimalSpec);
 
         // Persist schema so follow-up builds know what's already deployed
         schemaService.writeSchema(projectDir, packName, entity);
@@ -115,7 +131,12 @@ public class PackInstaller {
         m.put("server/routes.ts.hbs",  "server/src/routes/{{entities}}.ts");
         m.put("client/types.ts.hbs",   "src/types/index.ts");
         m.put("client/service.ts.hbs", "src/services/{{entities}}.ts");
-        m.put("client/page.tsx.hbs",   "src/pages/{{Entities}}Page.tsx");
+        // stats-dashboard always writes DashboardPage (not entity-named page)
+        if ("stats-dashboard".equals(packName)) {
+            m.put("client/page.tsx.hbs", "src/pages/DashboardPage.tsx");
+        } else {
+            m.put("client/page.tsx.hbs", "src/pages/{{Entities}}Page.tsx");
+        }
         return m;
     }
 

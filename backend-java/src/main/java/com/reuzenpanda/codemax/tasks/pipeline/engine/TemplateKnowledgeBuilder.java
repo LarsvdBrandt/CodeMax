@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Stream;
 
@@ -24,6 +25,10 @@ public class TemplateKnowledgeBuilder {
         String modelPattern   = read(projectDir, "server/src/models/Todo.ts");
         String routePattern   = read(projectDir, "server/src/routes/todos.ts");
         String pagePattern    = read(projectDir, "src/pages/Dashboard.tsx");
+        // On update runs Dashboard.tsx may already be deleted — fall back to first generated page
+        if (pagePattern.isBlank()) {
+            pagePattern = findFirstGeneratedPage(projectDir);
+        }
         String servicePattern = read(projectDir, "src/services/todos.ts");
 
         log.info("TemplateKnowledge: {} components, model={}, route={}, page={}, service={}",
@@ -50,6 +55,21 @@ public class TemplateKnowledgeBuilder {
             log.warn("Could not scan UI components directory: {}", e.getMessage());
         }
         return names;
+    }
+
+    private String findFirstGeneratedPage(Path projectDir) {
+        Path pagesDir = projectDir.resolve("src/pages");
+        if (!Files.exists(pagesDir)) return "";
+        try (Stream<Path> files = Files.list(pagesDir)) {
+            return files
+                .filter(p -> p.getFileName().toString().endsWith("Page.tsx"))
+                .min(Comparator.comparing(p -> p.getFileName().toString()))
+                .map(p -> { try { return Files.readString(p); } catch (IOException e) { return ""; } })
+                .orElse("");
+        } catch (IOException e) {
+            log.warn("Could not scan pages directory for backup pattern: {}", e.getMessage());
+            return "";
+        }
     }
 
     private String read(Path projectDir, String relativePath) {

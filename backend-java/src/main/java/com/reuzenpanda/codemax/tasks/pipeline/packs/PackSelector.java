@@ -39,10 +39,12 @@ public class PackSelector {
             """ + catalog + """
 
             Selection rules:
-            - For kanban/board/card/pipeline/workflow apps: select "kanban-entity"
-            - For list/table/CRUD/manage apps: select "crud-table"
+            - For CRM/sales/deals/leads/pipeline/funnel/opportunity apps: select "crm-pipeline"
+            - For kanban/board/card/workflow/task-board (non-CRM) apps: select "kanban-entity"
+            - For list/table/CRUD/manage/inventory/catalogue/shop apps: select "crud-table"
+            - For multi-entity apps (CRM, SaaS, project management, any app with 2+ distinct entities): ALSO select "stats-dashboard" as the second pack for the overview page
             - For informational/marketing/landing/portfolio sites: select "marketing-landing" if available
-            - Select AT MOST 2 packs
+            - Select AT MOST 2 packs total
             - If the app clearly needs user accounts/login: set needs_auth to true
             - If it is just informational (no user data, no login): set needs_auth to false
             - If no pack clearly fits, return an empty packs array

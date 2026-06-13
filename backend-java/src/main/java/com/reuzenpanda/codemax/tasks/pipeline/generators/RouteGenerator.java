@@ -4,6 +4,7 @@ import com.reuzenpanda.codemax.common.ai.AiRouter;
 import com.reuzenpanda.codemax.common.config.CodeMaxProperties;
 import com.reuzenpanda.codemax.tasks.pipeline.model.AppSpecification;
 import com.reuzenpanda.codemax.tasks.pipeline.model.EntitySpec;
+import com.reuzenpanda.codemax.tasks.pipeline.model.RelationSpec;
 import com.reuzenpanda.codemax.tasks.pipeline.model.TemplateKnowledge;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -53,8 +54,25 @@ public class RouteGenerator {
             "All routes must call authenticate as middleware.\n" +
             "Filter all queries by { userId: req.user._id } — users can only access their own items.\n" +
             "Import the model from '../models/" + entity.name() + "'.\n" +
-            "NEVER touch or regenerate auth.ts, User.ts, or authenticate.ts — those already exist.\n" +
+            "NEVER touch or regenerate auth.ts, User.ts, or authenticate.ts — those already exist.\n\n" +
+            "GET / must support optional query params for search and filtering:\n" +
+            "  const filter: Record<string, unknown> = { userId: req.user._id }\n" +
+            "  if (req.query.search)   filter.title    = new RegExp(String(req.query.search), 'i')\n" +
+            "  if (req.query.category) filter.category = req.query.category\n" +
+            "  if (req.query.stage)    filter.stage    = req.query.stage\n" +
+            "  if (req.query.status)   filter.status   = req.query.status\n" +
+            buildRelationFilterPrompt(entity) +
+            "Sort results by { createdAt: -1 } by default.\n\n" +
             "Output ONLY the TypeScript file content for " + entity.plural() + ".ts. No markdown. No explanation.";
+    }
+
+    private String buildRelationFilterPrompt(EntitySpec entity) {
+        RelationSpec belongsTo = entity.belongsTo();
+        if (belongsTo == null) return "";
+        return "  if (req.query." + belongsTo.foreignKey() + ") filter." + belongsTo.foreignKey()
+            + " = req.query." + belongsTo.foreignKey() + "\n"
+            + "This entity belongs to '" + belongsTo.entity() + "' via '" + belongsTo.foreignKey()
+            + "'. When creating, also set req.body." + belongsTo.foreignKey() + " from req.body (client must pass it).\n";
     }
 
     private void deleteTodo(Path projectDir, String relativePath) {

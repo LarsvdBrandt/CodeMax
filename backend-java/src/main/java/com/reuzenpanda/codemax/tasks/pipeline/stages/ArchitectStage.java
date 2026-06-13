@@ -41,11 +41,18 @@ public class ArchitectStage {
           },
           "entities": [
             {
-              "name":       "string — PascalCase singular, e.g. 'Invoice'",
-              "plural":     "string — lowercase plural, e.g. 'invoices'",
-              "route_path": "string — e.g. '/invoices'",
+              "name":       "string — PascalCase singular, e.g. 'Lead'",
+              "plural":     "string — lowercase plural, e.g. 'leads'",
+              "route_path": "string — e.g. '/leads'",
               "fields": [
                 {"name": "string", "type": "string — TS type", "required": true, "default_value": "string or null"}
+              ],
+              "relations": [
+                {
+                  "type":        "hasMany or belongsTo",
+                  "entity":      "string — PascalCase name of related entity",
+                  "foreign_key": "string — camelCase FK field name, e.g. 'leadId'"
+                }
               ]
             }
           ],
@@ -53,6 +60,12 @@ public class ArchitectStage {
           "features":   ["string — feature bullet"],
           "update":     false
         }
+
+        Relations guidance:
+        - For a CRM: Lead hasMany Deal; Deal belongsTo Lead (foreign_key: "leadId")
+        - For a shop with orders: Order hasMany OrderItem; OrderItem belongsTo Order (foreign_key: "orderId")
+        - Omit "relations" entirely if no relationships are needed (single-entity app)
+        - belongsTo entity must include the foreign_key field in its "fields" array as well (type: "string", required: true)
         """;
 
     /**
@@ -116,10 +129,15 @@ public class ArchitectStage {
               Indigo = '99 102 241', Teal = '20 184 166', Rose = '244 63 94', Amber = '245 158 11'
 
             Entity rules:
-            - Extract ONE primary entity (the core CRUD object). Add a second only if essential.
+            - Extract 1-3 entities. For simple apps: 1. For CRM/SaaS/complex apps: 2-3 is fine.
             - Field types: 'string', 'number', 'boolean', 'Date'. No custom types.
             - Include at minimum: title/name (string, required).
             - Do NOT include: _id, createdAt, updatedAt, userId — these are added automatically.
+            - For product/shop/card/item/inventory entities: include imageUrl (string), price (number), category (string), stock (number) where relevant to the description.
+            - For CRM/lead/contact/customer entities: include company (string), email (string), phone (string), stage (string) where relevant.
+            - For deal/opportunity/pipeline entities: include value (number), stage (string), probability (number) where relevant.
+            - For task/project/ticket entities: include status (string), priority (string), dueDate (Date) where relevant.
+            - For SaaS/subscription entities: include plan (string), status (string), trialEndsAt (Date) where relevant.
 
             Available lucide-react icon names for featureItems:
               Zap, Shield, Globe, Sparkles, Lock, Palette, Clock, Star, Heart, \

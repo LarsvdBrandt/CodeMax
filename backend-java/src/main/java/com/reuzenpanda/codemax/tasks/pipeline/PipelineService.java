@@ -218,13 +218,18 @@ public class PipelineService {
                     pageGen.generate(projectDir, spec, entity, knowledge);
                     generatedFiles.add("src/pages/" + entity.name() + "sPage.tsx");
                     pipeLog(task, "frontend_page", "done", "Page generated");
-
-                    pipeLog(task, "routing", "running", "Updating navigation");
-                    navGen.generate(projectDir, spec, entity);
-                    pipeLog(task, "routing", "done", "Navigation updated");
                 }
 
+                // Wire all routing + navigation once after all entities are generated
+                pipeLog(task, "routing", "running", "Updating navigation");
+                navGen.generateAll(projectDir, spec);
+                generatedFiles.add("src/App.tsx");
+                pipeLog(task, "routing", "done", "Navigation updated");
+
                 // Review gate (V3 only)
+                if (props.getReviewModel() == null || props.getReviewModel().isBlank()) {
+                    pipeLog(task, "review", "skipped", "No review-model configured (set review-model to enable)");
+                }
                 if (props.getReviewModel() != null && !props.getReviewModel().isBlank() && !spec.entities().isEmpty()) {
                     pipeLog(task, "review", "running", "Reviewing generated code");
                     EntitySpec primary = spec.entities().get(0);
@@ -271,8 +276,9 @@ public class PipelineService {
             String containerId = preview.containerId();
             boolean ready = false;
             for (int round = 0; round < MAX_FIX_ROUNDS && !ready; round++) {
-                Thread.sleep(25_000);
-                List<String> logLines = docker.getLogs(containerId, 100);
+                // First round: wait longer for npm install to complete (60-120s typical)
+                Thread.sleep(round == 0 ? 70_000 : 25_000);
+                List<String> logLines = docker.getLogs(containerId, 200);
                 String errorLog = String.join("\n", logLines);
 
                 if (docker.isHealthy(preview.port())) {
@@ -281,21 +287,29 @@ public class PipelineService {
                 }
                 if (hasErrors(errorLog)) {
                     pipeLog(task, "autofix", "running", "Fixing errors (round " + (round + 1) + ")");
-                    fixErrors(projectDir, errorLog, knowledge);
+                    fixErrors(projectDir, errorLog, knowledge, generatedFiles);
                 }
             }
 
-            project.setStatus(ProjectStatus.ready);
+            if (ready) {
+                project.setStatus(ProjectStatus.ready);
+                task.setStatus(TaskStatus.done);
+                pipeLog(task, "done", "done", "Build complete — preview on port " + preview.port());
+            } else {
+                project.setStatus(ProjectStatus.error);
+                task.setStatus(TaskStatus.error);
+                pipeLog(task, "error", "error", "Build timed out after " + MAX_FIX_ROUNDS + " rounds — app did not become healthy");
+            }
             projectRepo.save(project);
-            task.setStatus(TaskStatus.done);
             taskRepo.save(task);
-            pipeLog(task, "done", "done", "Build complete — preview on port " + preview.port());
 
-            // Auto-commit version snapshot after successful build
-            try {
-                versionService.autoCommit(projectId, taskId, project.getUserId(), task.getPrompt(), task.getBranchId());
-            } catch (Exception vEx) {
-                log.warn("Version auto-commit failed for task {}: {}", taskId, vEx.getMessage());
+            // Auto-commit version snapshot only after successful build
+            if (ready) {
+                try {
+                    versionService.autoCommit(projectId, taskId, project.getUserId(), task.getPrompt(), task.getBranchId());
+                } catch (Exception vEx) {
+                    log.warn("Version auto-commit failed for task {}: {}", taskId, vEx.getMessage());
+                }
             }
 
         } catch (Exception e) {
@@ -455,15 +469,25 @@ public class PipelineService {
     // ── Auto-fix ──────────────────────────────────────────────────────────────
 
     @SuppressWarnings("unchecked")
-    private void fixErrors(Path projectDir, String errorLog, TemplateKnowledge knowledge) {
+    private void fixErrors(Path projectDir, String errorLog, TemplateKnowledge knowledge,
+                            List<String> generatedFiles) {
         Map<String, String> files = new LinkedHashMap<>();
 
-        // Targeted: extract file paths mentioned in the error log first
+        // Priority 1: load the generated files (most likely sources of errors)
+        for (String rel : generatedFiles) {
+            Path p = projectDir.resolve(rel);
+            if (Files.exists(p)) {
+                try { files.put(rel, Files.readString(p)); }
+                catch (IOException ignored) {}
+            }
+        }
+
+        // Priority 2: extract file paths mentioned in the error log
         List<String> mentioned = extractMentionedFiles(errorLog);
         for (String rel : mentioned) {
             Path p = projectDir.resolve(rel);
             if (Files.exists(p)) {
-                try { files.put(rel, Files.readString(p)); }
+                try { files.putIfAbsent(rel, Files.readString(p)); }
                 catch (IOException ignored) {}
             }
         }

@@ -1,0 +1,27 @@
+export type PipelineStage = 'prospect' | 'qualified' | 'proposal' | 'negotiation' | 'won' | 'lost'
+
+export interface I{{EntityName}} {
+  _id: string
+  title: string
+  description: string
+  stage: PipelineStage
+  value: number
+  company: string
+  contactEmail: string
+  probability: number
+{{tsDefs}}
+  userId: string
+  createdAt: string
+  updatedAt: string
+}
+
+export interface Create{{EntityName}}Request {
+  title: string
+  description?: string
+  stage?: PipelineStage
+  value?: number
+  company?: string
+  contactEmail?: string
+  probability?: number
+{{tsRequestDefs}}
+}

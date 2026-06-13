@@ -1,0 +1,38 @@
+import mongoose, { Document, Schema } from 'mongoose'
+
+export type PipelineStage = 'prospect' | 'qualified' | 'proposal' | 'negotiation' | 'won' | 'lost'
+
+export interface I{{EntityName}} extends Document {
+  title: string
+  description: string
+  stage: PipelineStage
+  value: number
+  company: string
+  contactEmail: string
+  probability: number
+{{tsDefs}}
+  userId: mongoose.Types.ObjectId
+  createdAt: Date
+  updatedAt: Date
+}
+
+const {{EntityName}}Schema = new Schema<I{{EntityName}}>(
+  {
+    title:        { type: String, required: true, trim: true, maxlength: 200 },
+    description:  { type: String, default: '', maxlength: 2000 },
+    stage:        { type: String, enum: ['prospect', 'qualified', 'proposal', 'negotiation', 'won', 'lost'], default: 'prospect' },
+    value:        { type: Number, default: 0 },
+    company:      { type: String, default: '', trim: true },
+    contactEmail: { type: String, default: '', trim: true },
+    probability:  { type: Number, default: 20, min: 0, max: 100 },
+{{fieldDefs}}
+    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  },
+  { timestamps: true }
+)
+
+{{EntityName}}Schema.index({ userId: 1, stage: 1 })
+{{EntityName}}Schema.index({ userId: 1, createdAt: -1 })
+
+export const {{EntityName}} = mongoose.model<I{{EntityName}}>('{{EntityName}}', {{EntityName}}Schema)
+export default {{EntityName}}

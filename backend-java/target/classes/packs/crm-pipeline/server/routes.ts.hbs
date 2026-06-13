@@ -1,0 +1,70 @@
+import { Router } from 'express'
+import { authenticate } from '../middleware/authenticate'
+import { {{EntityName}} } from '../models/{{EntityName}}'
+
+const router = Router()
+
+// GET /api/{{entities}} — list all for user, optional ?stage= filter
+router.get('/', authenticate, async (req, res) => {
+  try {
+    const filter: Record<string, unknown> = { userId: req.user._id }
+    if (req.query.stage)  filter.stage  = req.query.stage
+    if (req.query.search) filter.title  = new RegExp(String(req.query.search), 'i')
+    const items = await {{EntityName}}.find(filter).sort({ createdAt: -1 })
+    res.json(items)
+  } catch { res.status(500).json({ message: 'Server error' }) }
+})
+
+// POST /api/{{entities}}
+router.post('/', authenticate, async (req, res) => {
+  try {
+    const item = await {{EntityName}}.create({ ...req.body, userId: req.user._id })
+    res.status(201).json(item)
+  } catch (err: any) { res.status(400).json({ message: err.message }) }
+})
+
+// GET /api/{{entities}}/:id
+router.get('/:id', authenticate, async (req, res) => {
+  try {
+    const item = await {{EntityName}}.findOne({ _id: req.params.id, userId: req.user._id })
+    if (!item) return res.status(404).json({ message: 'Not found' })
+    res.json(item)
+  } catch { res.status(500).json({ message: 'Server error' }) }
+})
+
+// PUT /api/{{entities}}/:id
+router.put('/:id', authenticate, async (req, res) => {
+  try {
+    const item = await {{EntityName}}.findOneAndUpdate(
+      { _id: req.params.id, userId: req.user._id },
+      req.body,
+      { new: true }
+    )
+    if (!item) return res.status(404).json({ message: 'Not found' })
+    res.json(item)
+  } catch { res.status(500).json({ message: 'Server error' }) }
+})
+
+// PATCH /api/{{entities}}/:id/stage — quick stage update (drag & drop)
+router.patch('/:id/stage', authenticate, async (req, res) => {
+  try {
+    const { stage } = req.body
+    const item = await {{EntityName}}.findOneAndUpdate(
+      { _id: req.params.id, userId: req.user._id },
+      { stage },
+      { new: true }
+    )
+    if (!item) return res.status(404).json({ message: 'Not found' })
+    res.json(item)
+  } catch { res.status(500).json({ message: 'Server error' }) }
+})
+
+// DELETE /api/{{entities}}/:id
+router.delete('/:id', authenticate, async (req, res) => {
+  try {
+    await {{EntityName}}.findOneAndDelete({ _id: req.params.id, userId: req.user._id })
+    res.status(204).send()
+  } catch { res.status(500).json({ message: 'Server error' }) }
+})
+
+export default router

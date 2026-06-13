@@ -1,0 +1,7 @@
+{
+  "name": "stats-dashboard",
+  "description": "Overview dashboard with stat cards, charts, and recent activity. Best for multi-entity apps that need a summary page showing totals, trends, and recent records.",
+  "requiresAuth": true,
+  "requiresEntity": false,
+  "tags": ["dashboard", "stats", "overview", "analytics", "metrics", "summary", "charts", "kpi", "totals", "activity"]
+}

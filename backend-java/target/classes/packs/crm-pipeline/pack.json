@@ -1,0 +1,7 @@
+{
+  "name": "crm-pipeline",
+  "description": "CRM pipeline board for managing deals, leads, or opportunities across stages. Best for sales pipelines, CRM systems, deal tracking, and opportunity management.",
+  "requiresAuth": true,
+  "requiresEntity": true,
+  "tags": ["crm", "pipeline", "deals", "leads", "sales", "opportunities", "stages", "funnel", "kanban", "board", "prospects"]
+}
