@@ -1145,7 +1145,7 @@ export default function ProjectPage() {
         </div>
 
         {/* Input */}
-        <div className="border-t border-[#1e1e1e] p-3">
+        <div className="p-3">
 
           {/* Suggestion buttons — shown during clarification */}
           {clarification && (
