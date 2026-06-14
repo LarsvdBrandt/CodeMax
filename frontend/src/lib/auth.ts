@@ -31,11 +31,15 @@ async function sendEmail(to: string, subject: string, html: string) {
 
 const appUrl = process.env.BETTER_AUTH_URL ?? "http://localhost:3000";
 
+const extraOrigins = process.env.BETTER_AUTH_TRUSTED_ORIGINS
+  ? process.env.BETTER_AUTH_TRUSTED_ORIGINS.split(",").map(s => s.trim()).filter(Boolean)
+  : [];
+
 export const auth = betterAuth({
   secret: process.env.JWT_SECRET!,
   baseURL: appUrl,
   basePath: "/auth",
-  trustedOrigins: [appUrl, "http://localhost:3000"],
+  trustedOrigins: [appUrl, "http://localhost:3000", ...extraOrigins],
   database: new PostgresDialect({
     pool: new pg.Pool({ connectionString: process.env.DATABASE_URL }),
   }),
