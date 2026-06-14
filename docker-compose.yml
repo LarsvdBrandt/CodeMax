@@ -1,7 +1,6 @@
 services:
   postgres:
     image: postgres:16-alpine
-    platform: linux/arm64
     environment:
       POSTGRES_USER: codemax
       POSTGRES_PASSWORD: codemax
@@ -18,7 +17,6 @@ services:
 
   rabbitmq:
     image: rabbitmq:3-management-alpine
-    platform: linux/arm64
     environment:
       RABBITMQ_DEFAULT_USER: codemax
       RABBITMQ_DEFAULT_PASS: codemax
@@ -33,7 +31,6 @@ services:
 
   mongodb:
     image: mongo:7
-    platform: linux/arm64
     environment:
       MONGO_INITDB_ROOT_USERNAME: codemax
       MONGO_INITDB_ROOT_PASSWORD: codemax
@@ -51,7 +48,6 @@ services:
     build:
       context: ./backend-java
       dockerfile: Dockerfile
-    platform: linux/arm64
     env_file: .env
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/codemax
@@ -112,12 +108,12 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    platform: linux/arm64
     env_file: .env
     environment:
       BACKEND_URL: http://backend:8000
       DATABASE_URL: postgresql://codemax:codemax@postgres:5432/codemax
-      BETTER_AUTH_URL: http://localhost:3000
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
+      BETTER_AUTH_TRUSTED_ORIGINS: ${BETTER_AUTH_TRUSTED_ORIGINS:-}
       # Override in .env to use your verified Resend domain.
       # Default falls back to onboarding@resend.dev (Resend test address).
       # RESEND_FROM_EMAIL: CodeMax <noreply@yourdomain.com>
@@ -135,7 +131,6 @@ services:
     build:
       context: ./nginx
       dockerfile: Dockerfile
-    platform: linux/arm64
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d
     ports:
