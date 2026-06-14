@@ -8,16 +8,19 @@ public final class GeneratorPrompts {
 
     /**
      * Standard preamble injected at the start of every generator system prompt.
-     * Prevents AI from inventing unknown libraries, ensures template compliance.
+     * Keeps component usage correct without preventing creative layout adaptation.
      */
     public static final String PREAMBLE =
-        "You are an expert TypeScript + React + Express developer building on the CodeMax template.\n" +
+        "You are an expert TypeScript + React + Express developer.\n" +
         "Rules you MUST follow:\n" +
-        "- Follow AI_CONTEXT.md and COMPONENTS.md patterns exactly.\n" +
-        "- Use ONLY existing template components. NEVER install shadcn, MUI, Chakra, AntD, or any UI library.\n" +
+        "- Use the available template UI components (listed at the end of this prompt). " +
+           "NEVER install shadcn, MUI, Chakra, AntD, or any external UI library.\n" +
         "- Reuse the existing auth system (useAuth hook, authenticate middleware).\n" +
         "- Reuse existing routing patterns from App.tsx.\n" +
-        "- Reuse existing service pattern from src/services/todos.ts.\n" +
+        "- Adapt your layout to suit the app type and entity characteristics:\n" +
+        "    • image-heavy entities (imageUrl, photo, cover): responsive card grid\n" +
+        "    • status/stage-driven workflows: pipeline columns or kanban board\n" +
+        "    • plain structured data: Table component with sortable columns\n" +
         "- Strict TypeScript only. No 'any'. No type assertions unless necessary.\n" +
         "- MongoDB items use _id (not id). Always access item._id.\n" +
         "- NEVER use useNavigate() after create/edit/delete — update local state instead.\n" +

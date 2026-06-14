@@ -160,11 +160,16 @@ public class PipelineService {
                     pipeLog(task, "pack_install", "done", packName + " installed");
                 }
 
-                // Build minimal spec for branding + memory
-                String appName = answers.getOrDefault("business_name", "My App");
+                // Build spec for branding + memory — use LLM-extracted branding from EntityExtractor
+                String appName  = answers.getOrDefault("business_name", "My App");
                 String colorRgb = answers.getOrDefault("primary_color", "99 102 241");
-                String tagline  = answers.getOrDefault("tagline", "");
-                BrandingSpec branding = new BrandingSpec(colorRgb, tagline, appName, prompt, List.of());
+                String heroHeadline = (entity.heroHeadline() != null && !entity.heroHeadline().isBlank())
+                    ? entity.heroHeadline() : appName;
+                String tagline = (entity.tagline() != null && !entity.tagline().isBlank())
+                    ? entity.tagline()
+                    : answers.getOrDefault("tagline", "Manage your " + entity.entityNamePlural() + " with ease.");
+                BrandingSpec branding = new BrandingSpec(colorRgb, tagline, heroHeadline,
+                    prompt, entity.featureItems() != null ? entity.featureItems() : List.of());
                 EntitySpec primaryEntity = new EntitySpec(
                     entity.entityName(), entity.entityNamePlural(),
                     "/" + entity.entityNamePlural(), List.of()

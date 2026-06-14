@@ -29,10 +29,10 @@ public class PageGenerator {
     public String generate(Path projectDir, AppSpecification spec, EntitySpec entity,
                             TemplateKnowledge knowledge) throws IOException {
         String system = GeneratorPrompts.withComponents(knowledge) +
-            "\nReference page file (follow patterns from this — state shape, hook usage, modal pattern):\n" +
+            "\nReference page file (use the state/hook/modal patterns from this — not the visual style):\n" +
             knowledge.pagePattern();
 
-        String user = buildUserPrompt(spec.appName(), entity, knowledge);
+        String user = buildUserPrompt(spec.appName(), spec.description(), entity, knowledge);
 
         log.info("PageGenerator: generating {} page...", entity.name());
         String code = aiRouter.chat(props.getCodeModel(), system, user);
@@ -59,7 +59,7 @@ public class PageGenerator {
         "stage", "status", "state", "phase", "step"
     );
 
-    private String buildUserPrompt(String appName, EntitySpec entity, TemplateKnowledge knowledge) {
+    private String buildUserPrompt(String appName, String appDescription, EntitySpec entity, TemplateKnowledge knowledge) {
         String fields = entity.fields().stream()
             .map(f -> f.name() + " (" + f.type() + (f.required() ? ", required" : "") + ")")
             .collect(Collectors.joining(", "));
@@ -77,7 +77,10 @@ public class PageGenerator {
         boolean hasStage  = fieldNames.stream().anyMatch(STAGE_FIELD_NAMES::contains);
 
         StringBuilder prompt = new StringBuilder();
-        prompt.append("Generate a complete React page component for managing ").append(n).append("s in the '").append(appName).append("' app.\n\n");
+        prompt.append("App context: \"").append(appDescription).append("\"\n");
+        prompt.append("App name: ").append(appName).append("\n\n");
+        prompt.append("Generate a complete React page component for managing ").append(n).append("s.\n");
+        prompt.append("Use the app context above to write realistic placeholder text, headings, and descriptions that match the domain.\n\n");
         prompt.append("Entity: ").append(n).append(" (plural: ").append(p).append(")\n");
         prompt.append("Fields: ").append(fields).append("\n\n");
         prompt.append("CRITICAL — use EXACTLY these import lines at the top of the file:\n");

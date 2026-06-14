@@ -21,7 +21,7 @@ export default function {{Entities}}Page() {
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<I{{EntityName}} | null>(null)
-  const [form, setForm] = useState<Create{{EntityName}}Request>({ title: '', description: '' })
+  const [form, setForm] = useState<Create{{EntityName}}Request>({ title: '', description: ''{{extraFormState}} })
   const [saving, setSaving] = useState(false)
 
   const [deleteTarget, setDeleteTarget] = useState<I{{EntityName}} | null>(null)
@@ -37,13 +37,13 @@ export default function {{Entities}}Page() {
 
   function openCreate() {
     setEditing(null)
-    setForm({ title: '', description: '' })
+    setForm({ title: '', description: ''{{extraFormState}} })
     setModalOpen(true)
   }
 
   function openEdit(item: I{{EntityName}}) {
     setEditing(item)
-    setForm({ title: item.title, description: item.description })
+    setForm({ title: item.title, description: item.description{{extraFormState}} })
     setModalOpen(true)
   }
 
@@ -84,6 +84,7 @@ export default function {{Entities}}Page() {
   const columns: Column<I{{EntityName}}>[] = [
     { key: 'title',       header: 'Title' },
     { key: 'description', header: 'Description' },
+{{extraTableColumns}}
     {
       key: 'createdAt',
       header: 'Created',
@@ -155,6 +156,7 @@ export default function {{Entities}}Page() {
             onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
             placeholder="Optional description..."
           />
+{{extraFormFields}}
         </div>
         <div className="flex justify-end gap-2 mt-6">
           <Button variant="ghost" onClick={() => setModalOpen(false)} disabled={saving}>

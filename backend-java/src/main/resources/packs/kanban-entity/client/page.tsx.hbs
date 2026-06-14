@@ -49,7 +49,7 @@ export default function {{Entities}}Page() {
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editing, setEditing] = useState<I{{EntityName}} | null>(null)
-  const [form, setForm] = useState<Create{{EntityName}}Request>({ title: '', description: '' })
+  const [form, setForm] = useState<Create{{EntityName}}Request>({ title: '', description: '', status: 'todo'{{extraFormState}} })
   const [saving, setSaving] = useState(false)
   const [newCardColumn, setNewCardColumn] = useState<{{EntityName}}Status>('todo')
 
@@ -85,7 +85,7 @@ export default function {{Entities}}Page() {
   function openCreate(columnId?: string) {
     setEditing(null)
     const status = (columnId as {{EntityName}}Status) ?? 'todo'
-    setForm({ title: '', description: '', status })
+    setForm({ title: '', description: '', status{{extraFormState}} })
     setNewCardColumn(status)
     setModalOpen(true)
   }
@@ -94,7 +94,7 @@ export default function {{Entities}}Page() {
     const item = items.find(i => i._id === card.id)
     if (!item) return
     setEditing(item)
-    setForm({ title: item.title, description: item.description, status: item.status, priority: item.priority })
+    setForm({ title: item.title, description: item.description, status: item.status, priority: item.priority{{extraFormState}} })
     setModalOpen(true)
   }
 
@@ -193,6 +193,7 @@ export default function {{Entities}}Page() {
               { value: 'high',   label: 'High' },
             ]}
           />
+{{extraFormFields}}
           {editing && (
             <Select
               label="Status"

@@ -353,22 +353,55 @@ Rules:
 
 ## AI Pipeline (Worker)
 
-The 12-step pipeline runs per task when the worker profile is active (`TaskListenerService.process()`):
+The pipeline runs per task when the worker profile is active (`PipelineService.runPipeline()`). It has two execution paths:
 
-| Step | Name | What happens |
-|---|---|---|
-| 1 | Seed template | Copy `/templates/nextjs-base/` into `/projects/{id}/` (skip existing files) |
-| 2 | Provision DB | Create `proj_{id}` database in PostgreSQL |
-| 3 | Analyze | LLM JSON: `{change_type, affected_files, summary}` |
-| 4 | Retrieve context | Fetch affected files from `project_files` |
-| 5 | Plan | LLM JSON: `{tasks: [{file, action, description}]}` |
-| 6 | Codegen | LLM per file; strip TS from .js; CJS→ESM in API routes |
-| 7 | Architecture summary | LLM → save as `_meta/architecture.md` |
-| 8 | DB schema | LLM: `{needs_db, schema_sql}`; execute against project DB |
-| 9 | Wire API routes | LLM: generate `pages/api/*.js` handlers |
-| 10 | API key check | Scan env vars; if missing → task status `waiting_for_key`; else write `.env.local` |
-| 11 | Build preview | Docker `node:20-alpine`, `npm install && npm run dev`, port 4000–5000 |
-| 12 | Auto-fix loop | Up to 5 rounds: parse npm/Next.js errors → LLM fix → rebuild |
+### Pack-based path (most prompts)
+
+`PackSelector` (planner model) chooses a pack; `EntityExtractor` extracts entity + branding in one LLM call; `PackInstaller` renders Handlebars templates.
+
+| Step | What happens |
+|---|---|
+| Seed template | Copy classpath `template/` into project dir |
+| Env vars | Write `.env` files, generate JWT secret |
+| Knowledge scan | Scan template for available UI components |
+| Pack select | LLM picks best pack(s): `crud-table`, `kanban-entity`, `crm-pipeline`, `stats-dashboard` |
+| Entity extract | LLM extracts entity name, extra fields, hero headline, tagline, feature items |
+| Pack install | Render `.hbs` templates with entity tokens (including dynamic form fields + table columns) |
+| Branding | Write `src/config/content.ts` with LLM-generated hero/tagline/features from entity extraction |
+| Build | Docker container start; auto-fix loop (max 5 rounds) |
+| Auto-commit | Snapshot all files |
+
+**Pack template tokens** (used in `.hbs` files):
+
+| Token | Example value |
+|---|---|
+| `{{EntityName}}` | `Product` |
+| `{{Entities}}` | `Products` |
+| `{{entityName}}` | `product` |
+| `{{entities}}` | `products` |
+| `{{extraFormState}}` | `, price: 0, category: '', imageUrl: ''` |
+| `{{extraFormFields}}` | `<Input label="Price" type="number" .../>` JSX for all extra entity fields |
+| `{{extraTableColumns}}` | `{ key: 'price', header: 'Price', render: ... }` Column entries |
+| `{{fieldDefs}}` | Mongoose schema extra field block |
+| `{{tsDefs}}` | TypeScript extra field declarations |
+
+### V3 fallback path (no matching pack)
+
+Full AI-generated code path using `ArchitectStage` → `PlannerStage` → generators.
+
+| Step | What happens |
+|---|---|
+| Architect | Planner model generates full `AppSpecification` (entities, branding, navigation) |
+| Plan | `PlannerStage` builds deterministic step list |
+| Model/Route/Types/Service/Page | One LLM call per entity per file type |
+| Navigation | Deterministic: single entity → patch Navbar; multi-entity → generate SideNav layout |
+| Review | Optional: `REVIEW_MODEL` env var enables a post-codegen review pass |
+| Branding | Write `src/config/content.ts` from LLM-generated branding spec |
+
+**PageGenerator** (`PageGenerator.java`) injects:
+- The original user prompt as `App context` so the LLM generates domain-specific placeholder text
+- Entity characteristic detection: image fields → card grid; stage/status fields → pipeline columns; default → Table
+- All entity fields rendered in the form and shown in the display layout
 
 After pipeline success: auto-commit (snapshot all files → `project_commits` + `project_commit_files`).
 

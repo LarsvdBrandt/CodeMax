@@ -15,9 +15,13 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
@@ -103,24 +107,132 @@ public class PackInstaller {
     // ── Token map ──────────────────────────────────────────────────────────────
 
     private Map<String, String> buildTokens(EntityDefinition entity) {
-        String name = entity.entityName(); // "task"
+        String name   = entity.entityName();   // "task"
         String plural = entity.entityNamePlural(); // "tasks"
-        String EntityName = capitalize(name);     // "Task"
-        String Entities = capitalize(plural);     // "Tasks"
+        String EntityName = capitalize(name);  // "Task"
+        String Entities   = capitalize(plural); // "Tasks"
 
         Map<String, String> t = new LinkedHashMap<>();
         t.put("EntityName", EntityName);
         t.put("entityName", name);
-        t.put("Entities", Entities);
-        t.put("entities", plural);
-        t.put("routePath", "/" + plural);
-        t.put("fieldDefs", entity.mongooseFields() != null ? entity.mongooseFields() : "");
-        t.put("tsDefs", entity.tsFields() != null ? entity.tsFields() : "");
+        t.put("Entities",   Entities);
+        t.put("entities",   plural);
+        t.put("routePath",  "/" + plural);
+        t.put("fieldDefs",  entity.mongooseFields() != null ? entity.mongooseFields() : "");
+        t.put("tsDefs",     entity.tsFields() != null ? entity.tsFields() : "");
         // Kanban-specific
-        t.put("statusValues", "'todo' | 'in-progress' | 'done'");
-        t.put("statusEnumValues", "'todo', 'in-progress', 'done'");
-        t.put("defaultStatus", "todo");
+        t.put("statusValues",      "'todo' | 'in-progress' | 'done'");
+        t.put("statusEnumValues",  "'todo', 'in-progress', 'done'");
+        t.put("defaultStatus",     "todo");
+
+        // ── Dynamic field tokens derived from tsFields ─────────────────────────
+        List<ExtraField> extraFields = parseTsExtraFields(entity.tsFields());
+
+        // {{extraFormState}} — extra key: defaultValue pairs for the form state object
+        // e.g.  , price: 0, category: '', imageUrl: ''
+        String extraFormState = extraFields.stream()
+            .map(f -> f.name + ": " + f.defaultValue())
+            .collect(Collectors.joining(", "));
+        t.put("extraFormState", extraFields.isEmpty() ? "" : ", " + extraFormState);
+
+        // {{extraFormFields}} — JSX <Input> elements for extra fields
+        t.put("extraFormFields", buildExtraFormFieldsJsx(extraFields));
+
+        // {{extraTableColumns}} — Column object entries for Table component
+        t.put("extraTableColumns", buildExtraTableColumnsJsx(extraFields));
+
         return t;
+    }
+
+    // ── Extra field parsing ────────────────────────────────────────────────────
+
+    private record ExtraField(String name, String tsType, boolean optional) {
+        String defaultValue() {
+            return switch (tsType) {
+                case "number" -> "0";
+                default       -> "''";
+            };
+        }
+        String inputType() {
+            String lower = name.toLowerCase();
+            if (tsType.equals("number")) return "number";
+            if (lower.contains("date") || lower.contains("at")) return "date";
+            if (lower.contains("email")) return "email";
+            if (lower.contains("url") || lower.contains("image") || lower.contains("photo") || lower.contains("img")) return "url";
+            return "text";
+        }
+        String label() {
+            // camelCase → "Camel Case"
+            String spaced = name.replaceAll("([A-Z])", " $1");
+            return Character.toUpperCase(spaced.charAt(0)) + spaced.substring(1).trim();
+        }
+    }
+
+    /** Parse lines like "  price?: number;\n  category?: string;" into ExtraField list. */
+    private List<ExtraField> parseTsExtraFields(String tsFields) {
+        List<ExtraField> result = new ArrayList<>();
+        if (tsFields == null || tsFields.isBlank()) return result;
+
+        // Match: optional whitespace, fieldName, optional ?, colon, type, semicolon
+        Pattern p = Pattern.compile("\\s*(\\w+)(\\?)?\\s*:\\s*(\\w+)\\s*;");
+        Matcher m = p.matcher(tsFields);
+        while (m.find()) {
+            String fieldName = m.group(1);
+            boolean optional = m.group(2) != null;
+            String tsType    = m.group(3).toLowerCase();
+            // Normalise Date → string (JS date inputs use string values)
+            if (tsType.equals("date")) tsType = "string";
+            result.add(new ExtraField(fieldName, tsType, optional));
+        }
+        return result;
+    }
+
+    /** Build JSX <Input> elements for all extra fields. */
+    private String buildExtraFormFieldsJsx(List<ExtraField> fields) {
+        if (fields.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        for (ExtraField f : fields) {
+            String inputType = f.inputType();
+            sb.append("          <Input\n");
+            sb.append("            label=\"").append(f.label()).append("\"\n");
+            if (!inputType.equals("text")) {
+                sb.append("            type=\"").append(inputType).append("\"\n");
+            }
+            sb.append("            value={form.").append(f.name).append(" ?? ").append(f.defaultValue().equals("0") ? "0" : "''").append("}\n");
+            sb.append("            onChange={e => setForm(f => ({ ...f, ").append(f.name).append(": ");
+            if (f.tsType.equals("number")) {
+                sb.append("Number(e.target.value)");
+            } else {
+                sb.append("e.target.value");
+            }
+            sb.append(" }))}\n");
+            sb.append("            placeholder=\"").append(f.label()).append("...\"\n");
+            sb.append("          />\n");
+        }
+        return sb.toString().stripTrailing();
+    }
+
+    /** Build Column entries for extra fields (for the Table component). */
+    private String buildExtraTableColumnsJsx(List<ExtraField> fields) {
+        if (fields.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        for (ExtraField f : fields) {
+            sb.append("    { key: '").append(f.name).append("', header: '").append(f.label()).append("'");
+            // Price / amount fields: format as currency
+            String lower = f.name.toLowerCase();
+            if (f.tsType.equals("number") &&
+                    (lower.contains("price") || lower.contains("amount") || lower.contains("cost")
+                     || lower.contains("value") || lower.contains("fee") || lower.contains("revenue"))) {
+                sb.append(", render: (v: unknown) => v != null ? `€${(v as number).toFixed(2)}` : '—'");
+            } else if (f.tsType.equals("number")) {
+                sb.append(", render: (v: unknown) => v != null ? String(v as number) : '—'");
+            }
+            sb.append(" },\n");
+        }
+        // Remove trailing comma+newline
+        String result = sb.toString();
+        if (result.endsWith(",\n")) result = result.substring(0, result.length() - 2) + "\n";
+        return result.stripTrailing();
     }
 
     // ── File map: template relative path → output relative path ───────────────
