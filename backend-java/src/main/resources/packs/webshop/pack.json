@@ -1,0 +1,7 @@
+{
+  "name": "webshop",
+  "description": "Product catalog with image cards, price display, category filter, and cart. Best for shops, marketplaces, and product showcases.",
+  "requiresAuth": true,
+  "requiresEntity": true,
+  "tags": ["shop", "store", "product", "catalog", "marketplace", "buy", "sell", "ecommerce", "webshop", "cart", "price", "inventory", "pokemon", "cards", "items", "listing"]
+}

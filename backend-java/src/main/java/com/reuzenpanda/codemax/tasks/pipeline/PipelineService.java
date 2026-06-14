@@ -146,7 +146,7 @@ public class PipelineService {
                 // ── Pack flow ─────────────────────────────────────────────────
                 pipeLog(task, "entity_extract", "running", "Extracting entity definition");
                 String existingSchema = isUpdate ? schemaService.schemaContext(projectDir) : "";
-                EntityDefinition entity = entityExtractor.extract(prompt, selection.packs(), existingSchema);
+                EntityDefinition entity = entityExtractor.extract(prompt, answers, selection.packs(), existingSchema);
                 pipeLog(task, "entity_extract", "done", "Entity: " + entity.entityName());
 
                 for (String packName : selection.packs()) {

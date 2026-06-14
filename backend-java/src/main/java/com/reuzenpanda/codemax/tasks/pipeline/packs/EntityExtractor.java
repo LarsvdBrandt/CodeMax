@@ -24,11 +24,16 @@ public class EntityExtractor {
 
     /** Extract entity definition for a new build. */
     public EntityDefinition extract(String prompt, List<String> packNames) {
-        return extract(prompt, packNames, "");
+        return extract(prompt, null, packNames, "");
     }
 
     /** Extract entity definition, optionally providing existing schema context for update builds. */
     public EntityDefinition extract(String prompt, List<String> packNames, String existingSchema) {
+        return extract(prompt, null, packNames, existingSchema);
+    }
+
+    /** Extract entity definition with full answers context (plan injected from answers["_plan"]). */
+    public EntityDefinition extract(String prompt, Map<String, String> answers, List<String> packNames, String existingSchema) {
         String sys = """
             You are an entity extractor for an app builder.
             Extract the main data entity name, its EXTRA fields, and branding content from the user's app description.
@@ -57,11 +62,15 @@ public class EntityExtractor {
             - Standard Mongoose field definitions: { type: Type, required: bool, default: val }
             - NEVER include: _id, userId, title, description, status, priority, createdAt, updatedAt
               (these are already defined in the template — adding them causes duplicate identifier errors)
-            - Add 2-4 extra fields that make sense for this specific entity
-              (e.g. for products: price, imageUrl, category, stock)
+            - If the selected pack is "webshop": ALSO never include imageUrl, price, category, stock
+              (these are already built into the webshop template — duplicating them causes compile errors)
+            - If the selected pack is "kanban-entity": ALSO never include status, priority
+            - If the selected pack is "crm-pipeline": ALSO never include stage
+            - Add 2-4 extra fields that make sense for this specific entity and are NOT already covered by the pack
               (e.g. for expenses: amount, category, date, merchant)
               (e.g. for contacts: email, phone, company, role)
-            - If truly no extra fields are needed, use empty strings for both mongoose_fields and ts_fields
+              (e.g. for subscriptions: plan, billingCycle, trialEndsAt)
+            - If no extra fields are needed beyond what the pack already provides, use empty strings
 
             Rules for ts_fields — EXTRA fields only:
             - Each field indented with 2 spaces, ending with semicolon
@@ -86,9 +95,21 @@ public class EntityExtractor {
             - Each item must be specific to this app, not generic placeholders
             """;
 
-        String userMsg = (existingSchema != null && !existingSchema.isBlank()
-            ? existingSchema + "\n\n"
-            : "") + "App: " + prompt;
+        StringBuilder userMsgBuilder = new StringBuilder();
+        if (existingSchema != null && !existingSchema.isBlank()) {
+            userMsgBuilder.append(existingSchema).append("\n\n");
+        }
+        if (packNames != null && !packNames.isEmpty()) {
+            userMsgBuilder.append("Selected packs: ").append(String.join(", ", packNames)).append("\n\n");
+        }
+        if (answers != null) {
+            String plan = answers.getOrDefault("_plan", "");
+            if (!plan.isBlank()) {
+                userMsgBuilder.append("Feature plan (confirmed by user):\n").append(plan).append("\n\n");
+            }
+        }
+        userMsgBuilder.append("App: ").append(prompt);
+        String userMsg = userMsgBuilder.toString();
 
         try {
             String raw = aiRouter.chatJson(props.getPlannerModel(), sys, userMsg);

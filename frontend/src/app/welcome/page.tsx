@@ -221,6 +221,7 @@ export default function WelcomePage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [originalRequest, setOriginalRequest] = useState("");
+  const [confirmedPlan, setConfirmedPlan] = useState("");
   const [error, setError] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -261,6 +262,7 @@ export default function WelcomePage() {
       setPhase("planning");
       try {
         const { plan } = await generatePlan(text);
+        setConfirmedPlan(plan);
         setPhase("review");
         setMessages(m => [...m, {
           role: "ai",
@@ -314,6 +316,7 @@ export default function WelcomePage() {
       try {
         const refined = `Original: ${originalRequest}\n\nFeedback: ${text}\n\nUpdate the plan based on this feedback.`;
         const { plan } = await generatePlan(refined);
+        setConfirmedPlan(plan);
         setPhase("review");
         addAiMessage(`${plan}\n\nLooks good? Say **yes** to continue, or tell me what to change.`);
       } catch {
@@ -332,7 +335,7 @@ export default function WelcomePage() {
       const name = businessName?.trim()
         ? businessName.trim()
         : originalRequest.slice(0, 40).replace(/[^a-zA-Z0-9\s]/g, "").trim() || "My App";
-      const result = await createProject(name, originalRequest, finalAnswers);
+      const result = await createProject(name, originalRequest, finalAnswers, confirmedPlan);
       const projectId = result?.project_id;
       if (!projectId) {
         setError("Server did not return a project ID — please try again.");
@@ -354,6 +357,7 @@ export default function WelcomePage() {
     setPhase("initial");
     setMessages([]);
     setOriginalRequest("");
+    setConfirmedPlan("");
     setInput("");
     setError("");
     setQuestions([]);

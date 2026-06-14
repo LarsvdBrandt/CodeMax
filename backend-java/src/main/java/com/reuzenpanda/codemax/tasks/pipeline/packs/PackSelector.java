@@ -38,16 +38,20 @@ public class PackSelector {
             Available packs:
             """ + catalog + """
 
-            Selection rules:
-            - For CRM/sales/deals/leads/pipeline/funnel/opportunity apps: select "crm-pipeline"
-            - For kanban/board/card/workflow/task-board (non-CRM) apps: select "kanban-entity"
-            - For list/table/CRUD/manage/inventory/catalogue/shop apps: select "crud-table"
-            - For multi-entity apps (CRM, SaaS, project management, any app with 2+ distinct entities): ALSO select "stats-dashboard" as the second pack for the overview page
-            - For informational/marketing/landing/portfolio sites: select "marketing-landing" if available
+            Selection rules (apply in order — first matching rule wins for the primary pack):
+            - For webshop/shop/store/marketplace/buy/sell/product catalog/ecommerce/card shop/pokemon/collectibles/inventory for sale: select "webshop"
+            - For CRM/sales/deals/leads/pipeline/funnel/opportunity/clients/prospects: select "crm-pipeline"
+            - For kanban/board/sprint/workflow/task-board/project board (non-CRM): select "kanban-entity"
+            - For list/table/CRUD/manage/records/catalogue/form/survey/collect/registration/tracker: select "crud-table"
+            - For pure landing page/marketing site/portfolio/brochure/informational (no user login or persistent data needed): return empty packs array — the landing page template handles it without a pack
+            - For subscription/billing/SaaS pricing/Stripe/payment tiers/membership: return empty packs array — the V3 generator handles complex multi-step flows
+            - For booking/appointment/calendar/scheduling/reservation: select "crud-table" (entity: Booking)
+            - For multi-entity apps (CRM, SaaS dashboard, project management, any app with 2+ distinct entity types): ALSO select "stats-dashboard" as the second pack for a summary/overview page
             - Select AT MOST 2 packs total
+            - Only select packs that are listed in the available packs above
+            - If no pack clearly fits the description, return an empty packs array
             - If the app clearly needs user accounts/login: set needs_auth to true
-            - If it is just informational (no user data, no login): set needs_auth to false
-            - If no pack clearly fits, return an empty packs array
+            - If it is purely informational (no user data, no login): set needs_auth to false
 
             Respond ONLY with valid JSON, no other text:
             {"packs": ["pack-name"], "needs_auth": true}

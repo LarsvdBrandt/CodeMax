@@ -88,11 +88,12 @@ export async function listProjects(): Promise<Project[]> {
 export async function createProject(
   name: string,
   description: string,
-  answers?: Record<string, string>
+  answers?: Record<string, string>,
+  plan?: string
 ): Promise<{ task_id: string; project_id: string }> {
   return request("/projects", {
     method: "POST",
-    body: JSON.stringify({ name, description, answers }),
+    body: JSON.stringify({ name, description, answers, plan }),
   });
 }
 

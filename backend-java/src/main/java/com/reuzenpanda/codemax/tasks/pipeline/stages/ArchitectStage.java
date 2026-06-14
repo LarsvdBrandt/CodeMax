@@ -160,8 +160,17 @@ public class ArchitectStage {
     private String buildUserPrompt(String prompt, Map<String, String> answers) {
         StringBuilder sb = new StringBuilder("User description:\n").append(prompt);
         if (answers != null && !answers.isEmpty()) {
-            sb.append("\n\nAdditional answers from user:\n");
-            answers.forEach((k, v) -> sb.append("- ").append(k).append(": ").append(v).append("\n"));
+            String plan = answers.get("_plan");
+            if (plan != null && !plan.isBlank()) {
+                sb.append("\n\nConfirmed feature plan (use this to guide entity design and branding):\n").append(plan);
+            }
+            boolean hasOther = answers.entrySet().stream().anyMatch(e -> !e.getKey().equals("_plan"));
+            if (hasOther) {
+                sb.append("\n\nAdditional answers from user:\n");
+                answers.forEach((k, v) -> {
+                    if (!k.equals("_plan")) sb.append("- ").append(k).append(": ").append(v).append("\n");
+                });
+            }
         }
         return sb.toString();
     }

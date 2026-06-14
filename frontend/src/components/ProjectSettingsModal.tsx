@@ -1,6 +1,6 @@
 "use client";
-import { useState } from "react";
-import { renameProject, deleteProject, type Project } from "@/lib/api";
+import { useState, useEffect } from "react";
+import { renameProject, deleteProject, detectKeys, createApiKey, type Project, type MissingKey } from "@/lib/api";
 import TeamContent from "./TeamContent";
 import { useRouter } from "next/navigation";
 
@@ -11,18 +11,64 @@ interface Props {
   onProjectUpdated: (project: Project) => void;
 }
 
-type Tab = "general" | "team";
+type Tab = "general" | "team" | "api-keys";
 
 export default function ProjectSettingsModal({ project, myRole, onClose, onProjectUpdated }: Props) {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>("general");
+
+  // General tab state
   const [name, setName] = useState(project.name);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [error, setError] = useState("");
 
+  // API Keys tab state
+  const [keysLoading, setKeysLoading] = useState(false);
+  const [keysLoaded, setKeysLoaded] = useState(false);
+  const [missingKeys, setMissingKeys] = useState<MissingKey[]>([]);
+  const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
+  const [keySaving, setKeySaving] = useState<Record<string, boolean>>({});
+  const [keySaved, setKeySaved] = useState<Record<string, boolean>>({});
+  const [keysError, setKeysError] = useState("");
+
   const isOwner = myRole === "owner";
+
+  useEffect(() => {
+    if (tab === "api-keys" && !keysLoaded) {
+      loadKeys();
+    }
+  }, [tab]);
+
+  async function loadKeys() {
+    setKeysLoading(true);
+    setKeysError("");
+    try {
+      const result = await detectKeys(project.id, project.description);
+      setMissingKeys(result.missing ?? []);
+      setKeysLoaded(true);
+    } catch {
+      setKeysError("Could not detect required API keys. Try again.");
+    } finally {
+      setKeysLoading(false);
+    }
+  }
+
+  async function handleSaveKey(key: MissingKey) {
+    const value = keyInputs[key.env_var]?.trim();
+    if (!value) return;
+    setKeySaving(s => ({ ...s, [key.env_var]: true }));
+    try {
+      await createApiKey(key.env_var, key.service, value);
+      setKeySaved(s => ({ ...s, [key.env_var]: true }));
+      setMissingKeys(prev => prev.filter(k => k.env_var !== key.env_var));
+    } catch {
+      setKeysError(`Failed to save ${key.service} key. Try again.`);
+    } finally {
+      setKeySaving(s => ({ ...s, [key.env_var]: false }));
+    }
+  }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -51,6 +97,12 @@ export default function ProjectSettingsModal({ project, myRole, onClose, onProje
     }
   }
 
+  const tabs: { id: Tab; label: string }[] = [
+    { id: "general", label: "General" },
+    { id: "team", label: "Team" },
+    { id: "api-keys", label: "API Keys" },
+  ];
+
   return (
     <>
       <div className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm" onClick={onClose} />
@@ -69,20 +121,26 @@ export default function ProjectSettingsModal({ project, myRole, onClose, onProje
 
           {/* Tabs */}
           <div className="flex items-center gap-1 px-5 py-3 border-b border-[#1e1e1e] shrink-0">
-            {(["general", "team"] as Tab[]).map(t => (
+            {tabs.map(t => (
               <button
-                key={t}
-                onClick={() => setTab(t)}
+                key={t.id}
+                onClick={() => setTab(t.id)}
                 className={`px-3 py-1.5 rounded-[8px] text-xs font-medium capitalize transition-colors ${
-                  tab === t ? "bg-[#1a1a1a] text-white" : "text-[#555] hover:text-[#888]"
+                  tab === t.id ? "bg-[#1a1a1a] text-white" : "text-[#555] hover:text-[#888]"
                 }`}
               >
-                {t}
+                {t.label}
+                {t.id === "api-keys" && keysLoaded && missingKeys.length > 0 && (
+                  <span className="ml-1.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-amber-500/20 text-amber-400 text-[9px] font-bold">
+                    {missingKeys.length}
+                  </span>
+                )}
               </button>
             ))}
           </div>
 
           <div className="flex-1 overflow-y-auto p-5">
+            {/* General tab */}
             {tab === "general" && (
               <div className="space-y-6">
                 <form onSubmit={handleSave} className="space-y-3">
@@ -139,12 +197,87 @@ export default function ProjectSettingsModal({ project, myRole, onClose, onProje
               </div>
             )}
 
+            {/* Team tab */}
             {tab === "team" && (
               <TeamContent
                 projectId={project.id}
                 projectName={project.name}
                 myRole={myRole}
               />
+            )}
+
+            {/* API Keys tab */}
+            {tab === "api-keys" && (
+              <div className="space-y-4">
+                <div>
+                  <p className="text-xs text-[#666] font-medium uppercase tracking-wider mb-1">Required API Keys</p>
+                  <p className="text-xs text-[#444]">Keys detected as required for this project. Saved keys are used during builds.</p>
+                </div>
+
+                {keysLoading && (
+                  <div className="flex items-center gap-2 text-xs text-[#555] py-4">
+                    <span className="animate-spin">⟳</span> Scanning project for required keys…
+                  </div>
+                )}
+
+                {keysError && (
+                  <div className="flex items-center justify-between bg-red-500/10 border border-red-500/20 rounded-[10px] px-3 py-2.5">
+                    <p className="text-xs text-red-400">{keysError}</p>
+                    <button onClick={loadKeys} className="text-xs text-red-400 hover:text-red-300 underline ml-3">Retry</button>
+                  </div>
+                )}
+
+                {keysLoaded && !keysLoading && missingKeys.length === 0 && (
+                  <div className="flex items-center gap-2.5 bg-green-500/10 border border-green-500/20 rounded-[12px] px-4 py-3">
+                    <span className="text-green-400 text-base">✓</span>
+                    <p className="text-xs text-green-400 font-medium">All required API keys are configured.</p>
+                  </div>
+                )}
+
+                {missingKeys.map(key => (
+                  <div key={key.env_var} className="bg-[#111] border border-amber-500/20 rounded-[12px] p-4 space-y-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-amber-400 text-xs">⚠</span>
+                          <span className="text-sm font-semibold text-white">{key.service}</span>
+                          <span className="text-[10px] font-mono text-[#555] bg-[#1a1a1a] px-1.5 py-0.5 rounded">{key.env_var}</span>
+                        </div>
+                        <p className="text-xs text-[#555] mt-1">{key.description}</p>
+                      </div>
+                    </div>
+                    {keySaved[key.env_var] ? (
+                      <p className="text-xs text-green-400">✓ Key saved successfully</p>
+                    ) : (
+                      <div className="flex gap-2">
+                        <input
+                          type="password"
+                          value={keyInputs[key.env_var] ?? ""}
+                          onChange={e => setKeyInputs(v => ({ ...v, [key.env_var]: e.target.value }))}
+                          placeholder={`Paste your ${key.service} key…`}
+                          className="flex-1 bg-[#0a0a0a] border border-[#2a2a2a] rounded-[8px] px-3 py-2 text-xs text-white placeholder-[#333] focus:outline-none focus:border-[#444] transition-colors font-mono"
+                        />
+                        <button
+                          onClick={() => handleSaveKey(key)}
+                          disabled={keySaving[key.env_var] || !keyInputs[key.env_var]?.trim()}
+                          className="px-3 py-2 bg-white text-black text-xs font-semibold rounded-[8px] hover:bg-[#e0e0e0] transition-colors disabled:opacity-40 whitespace-nowrap"
+                        >
+                          {keySaving[key.env_var] ? "Saving…" : "Save"}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {keysLoaded && (
+                  <button
+                    onClick={() => { setKeysLoaded(false); loadKeys(); }}
+                    className="text-xs text-[#444] hover:text-[#888] transition-colors"
+                  >
+                    ↻ Rescan project
+                  </button>
+                )}
+              </div>
             )}
           </div>
         </div>

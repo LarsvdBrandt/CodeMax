@@ -364,7 +364,7 @@ The pipeline runs per task when the worker profile is active (`PipelineService.r
 | Seed template | Copy classpath `template/` into project dir |
 | Env vars | Write `.env` files, generate JWT secret |
 | Knowledge scan | Scan template for available UI components |
-| Pack select | LLM picks best pack(s): `crud-table`, `kanban-entity`, `crm-pipeline`, `stats-dashboard` |
+| Pack select | LLM picks best pack(s): `crud-table`, `kanban-entity`, `crm-pipeline`, `stats-dashboard`, `webshop` |
 | Entity extract | LLM extracts entity name, extra fields, hero headline, tagline, feature items |
 | Pack install | Render `.hbs` templates with entity tokens (including dynamic form fields + table columns) |
 | Branding | Write `src/config/content.ts` with LLM-generated hero/tagline/features from entity extraction |
@@ -446,7 +446,8 @@ DockerClient docker = DockerClientBuilder.getInstance()
 
 ## Implementation Status
 
-### Done
+All features are implemented and deployed via Docker Compose.
+
 - [x] Domain structure: auth, projects, tasks, teams, versions
 - [x] Flyway migrations V1–V10
 - [x] JWT filter + Security config
@@ -458,10 +459,15 @@ DockerClient docker = DockerClientBuilder.getInstance()
 - [x] Teams domain (ProjectMember, TeamController — 6 endpoints)
 - [x] Versions domain (Branch, Commit, PR — VersionController — 11 endpoints)
 - [x] PR approve/reject flow in VersionService
-
-### In Progress / TODO
-- [ ] Worker pipeline full implementation (12 steps in TaskListenerService)
-- [ ] DockerService — full container lifecycle (start, stop, logs, build)
-- [ ] OpenAI WebClient — LLM call wrappers
-- [ ] PackRegistry / PackSelector — pack-based code generation
-- [ ] ReviewStage — AI-assisted code review in pipeline
+- [x] DockerService — full container lifecycle (provision, start, stop, logs, health check)
+- [x] AiRouter — multi-provider LLM router (OpenAI, Anthropic, Gemini, DeepSeek)
+- [x] PackRegistry / PackSelector — auto-discovers packs from classpath, LLM-based routing
+- [x] EntityExtractor — LLM extracts entity name, extra fields, branding (headline, tagline, features)
+- [x] PackInstaller — Handlebars-style `.hbs` template rendering with dynamic field tokens
+- [x] 5 packs: `crud-table`, `kanban-entity`, `crm-pipeline`, `stats-dashboard`, `webshop`
+- [x] V3 fallback path — ArchitectStage → generators → NavigationGenerator
+- [x] ReviewStage — optional AI code review pass (requires `REVIEW_MODEL`)
+- [x] BrandingGenerator — writes `src/config/content.ts` from LLM branding spec
+- [x] Auto-fix loop — up to 5 rounds of error detection + LLM fix
+- [x] Auto-commit — snapshot all files to `project_commits` after successful build
+- [x] Plan passthrough — confirmed feature plan stored in `answers["_plan"]` and injected into EntityExtractor + ArchitectStage prompts for richer context
