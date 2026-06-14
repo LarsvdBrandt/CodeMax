@@ -1,5 +1,5 @@
 .env
-projects/
+/projects/
 node_modules/
 .next/
 __pycache__/
