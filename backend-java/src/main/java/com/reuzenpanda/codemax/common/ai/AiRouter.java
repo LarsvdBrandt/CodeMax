@@ -37,8 +37,8 @@ public class AiRouter {
     }
 
     private String call(String model, String systemPrompt, String userMessage, boolean jsonMode) {
-        log.debug("AI call: model={} jsonMode={}", model, jsonMode);
         AiProvider provider = ModelRegistry.forModel(model);
+        log.info("AI call: model='{}' provider={} jsonMode={}", model, provider, jsonMode);
         return switch (provider) {
             case OPENAI    -> callOpenAiFormat(openAiClient,   model, systemPrompt, userMessage, jsonMode, props.getOpenaiApiKey());
             case DEEPSEEK  -> callOpenAiFormat(deepSeekClient, model, systemPrompt, userMessage, jsonMode, props.getDeepseekApiKey());

@@ -21,6 +21,11 @@ public final class ModelRegistry {
     private ModelRegistry() {}
 
     public static AiProvider forModel(String model) {
-        return REGISTRY.getOrDefault(model, AiProvider.OPENAI);
+        if (model == null) return AiProvider.OPENAI;
+        AiProvider provider = REGISTRY.get(model.strip());
+        if (provider == null) {
+            throw new IllegalArgumentException("Unknown model: '" + model.strip() + "'. Add it to ModelRegistry.");
+        }
+        return provider;
     }
 }
